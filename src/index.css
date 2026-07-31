@@ -1,0 +1,14 @@
+:root {
+  font-family: Aptos, "Segoe UI Variable", "Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  color: oklch(0.24 0.018 345);
+  background: #f8faf7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; }
+button, input, select, textarea { font: inherit; }
+button, select { min-height: 40px; }
+button:focus-visible, select:focus-visible { outline: 3px solid oklch(0.82 0.13 343); outline-offset: 2px; }
