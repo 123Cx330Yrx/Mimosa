@@ -1,74 +1,240 @@
-# Mimosa bilingual research prototype
+# Mimosa
 
-Mimosa is an experiment-facing, bilingual online-meeting system for lightweight and compassionate repair of socially ambiguous silence. JaaS/Jitsi supplies the embedded audio/video room; Mimosa owns role confirmation, private response cues, shared ecological feedback, care actions, deferred questions, and pseudonymous event logging.
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+Mimosa is a bilingual, browser-based companion for online meetings. It gives a group a calm, playful way to handle an unanswered question without identifying, scoring, or publicly singling out a participant.
+
+The application embeds a Jitsi/JaaS meeting and adds a shared ecological scene. Participants can privately express that they need time, are checking something, or feel some social pressure. These private choices are translated into anonymous sunlight, watering, and cloud cues. The person waiting for an answer can then slow down, open the question to the room, rephrase it, or save it for later.
+
+**Live site:** [mimosa-srtp.com](https://mimosa-srtp.com)<br>
+**License:** [MIT](LICENSE)
+
+![Mimosa running alongside an online meeting](deliverables/ui-en-closing-v2.png)
+
+## What it offers
+
+- A complete browser meeting experience powered by Jitsi as a Service (JaaS).
+- Chinese and English interfaces that can be changed before or during a call.
+- Manual open-question marking and optional local silence sensing.
+- Private, low-effort responses with anonymous shared feedback.
+- A living mimosa scene with growth, leaf movement, sunlight, watering, clouds, seed storage, and restoration animations.
+- Editable deferred questions that can be brought back into the conversation.
+- A draggable overlay whose position is remembered in the current browser.
+- Dynamic room membership; the interaction is not limited to four participants.
+- No account system and no server-side speech transcription in this repository.
+
+## How a Mimosa round works
+
+1. A member marks a question as open. Alternatively, after somebody has spoken, the local speech-activity logic can notice a sustained quiet period.
+2. Each member privately chooses the position that best fits the moment. A member may claim that they are waiting for a response, may be likely to respond, or may dismiss Mimosa for this moment.
+3. Once somebody claims the waiting role, a seedling grows into a mimosa and its leaves begin to close gradually.
+4. Other members can privately choose **Need a little time**, **Checking something**, or **Feeling some pressure**.
+5. Their identities remain private. The shared scene expresses the room's responses through coordinated environmental cues, while the waiting member can see anonymous totals.
+6. The waiting member responds with a supportive action: allow more time, invite the whole room, rephrase the question, return later, or confirm that somebody has responded.
+7. A deferred question becomes a seed. It can be edited and reopened later.
+
+The ecological scene is deliberately an action cue rather than a diagnosis. Mimosa does not claim that it knows why a person is silent.
+
+## Use the hosted version
+
+Open [https://mimosa-srtp.com](https://mimosa-srtp.com), enter a room name and display name, and join. People who enter the same room name meet one another; different room names create independent meetings.
+
+You can also prepare links in advance:
+
+```text
+Chinese: https://mimosa-srtp.com/?room=community-weekly&name=Alex
+English: https://mimosa-srtp.com/?room=community-weekly&name=Alex&lang=en
+```
+
+Use a unique room name for every simultaneous group. Room names should contain only simple letters, numbers, and hyphens, for example `team-a-2026-07-31`.
 
 ## Run locally
 
-```powershell
-npm.cmd install
-npm.cmd run dev
+### Requirements
+
+- A current Node.js LTS release (Node.js 22 is recommended).
+- npm, included with Node.js.
+- A modern Chromium, Firefox, or Safari browser with camera and microphone permission.
+
+### Install
+
+```bash
+git clone https://github.com/123Cx330Yrx/Mimosa.git
+cd Mimosa
+npm install
+cp .env.example .env.local
+npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The deployed JaaS App ID is supplied by the build configuration and is not entered by study participants. Each group enters its assigned room ID and display name. Different room IDs create isolated meetings and allow concurrent study sessions.
+On Windows PowerShell, replace the `cp` command with:
 
-## Language and access links
+```powershell
+Copy-Item .env.example .env.local
+```
 
-The entire runtime interface is available in Chinese and English. Language can be switched before or during a meeting and is also encoded in the URL.
+Open the local address printed by Vite, normally `http://localhost:5173`.
+
+## Configure Jitsi as a Service
+
+Mimosa uses JaaS for the embedded audio/video room. For a public deployment, create your own JaaS application in the 8x8 developer console and copy its App ID into `.env.local`:
+
+```dotenv
+VITE_JAAS_APP_ID=vpaas-magic-cookie-your-app-id
+VITE_RESPONSE_COUNT_MODE=exact
+```
+
+`VITE_JAAS_APP_ID` is a public project identifier and is expected to be included in the built JavaScript. It is not a private key.
+
+Never place a JaaS private key, API secret, or long-lived JWT in `.env.local` or any `VITE_*` variable: Vite exposes these values to the browser. If your deployment requires authenticated users, recording, or other protected JaaS features, add a server-side token endpoint and issue short-lived JWTs there.
+
+### Configuration options
+
+| Variable | Values | Purpose |
+| --- | --- | --- |
+| `VITE_JAAS_APP_ID` | JaaS App ID | Selects the JaaS application used by the embedded meeting. |
+| `VITE_RESPONSE_COUNT_MODE` | `exact`, `coarse`, `hidden` | Controls how anonymous response totals are shown to the waiting member. |
+
+Restart the development server after changing environment variables.
+
+## Everyday use
+
+### Create or join a room
+
+Enter the same room name on each device. Mimosa does not impose a four-person limit, although the practical room size is also governed by your JaaS plan and the participants' devices and network conditions.
+
+### Change language
+
+Use the language control in the interface or add `lang=en` to the URL. Without that parameter, Mimosa starts in Chinese.
+
+### Move the plant
+
+Drag the dialogue bubble to move the entire Mimosa overlay. The position is saved in the browser. Double-click the drag area to restore the default position.
+
+### Run several meetings at once
+
+Give every group a distinct `room` value:
 
 ```text
-Chinese participant: https://mimosa-srtp.com/?study=1&room=G01-task1
-English participant: https://mimosa-srtp.com/?study=1&room=G01-task1&lang=en
-Chinese observer:    https://mimosa-srtp.com/?research=1&room=G01-task1
-English observer:    https://mimosa-srtp.com/?research=1&room=G01-task1&lang=en
+https://mimosa-srtp.com/?room=book-club-a
+https://mimosa-srtp.com/?room=book-club-b
+https://mimosa-srtp.com/?room=design-team
 ```
 
-Omit `room=` when participants should type the assigned room ID themselves. Do not reuse a room ID for two simultaneous groups.
+The rooms are isolated even when they use the same deployment.
 
-## Verification
+## Build and deploy
 
-```powershell
-npm.cmd run test
-npm.cmd run lint
-npm.cmd run build
+Create a production build:
+
+```bash
+npm run test
+npm run lint
+npm run build
 ```
 
-## Implemented experiment path
+The deployable static site is written to `dist/`. Test it locally with:
 
-1. Any member can manually mark an open question and become the temporary waiting member.
-2. After at least one utterance has ended, a privacy-preserving speech-activity sensor can create a candidate after eight seconds of room silence. It does not infer who asked a question or interpret speech content.
-3. Members privately claim a temporary role. The candidate expires after twelve seconds if nobody claims the waiting role.
-4. Once a waiting member is confirmed, a seedling grows into a mimosa. After the growth settles, its leaves immediately begin a slow, gradual closing motion instead of waiting for a second inactivity threshold.
-5. Responding members privately choose `NEED_TIME`, `CHECKING`, or `SOCIAL_PRESSURE`, then express the response through sunlight, watering, or clouds where appropriate.
-6. Only the waiting member receives the exact anonymous cue counts. The room sees a coordinated shared environment without participant identities.
-7. The waiting member chooses a care action that changes the plant or stores the question as an editable seed.
-8. Sustained renewed speech asks the waiting member to confirm recovery instead of ending the round automatically.
-9. Late participants recover the public candidate or confirmed state. Private cues are deliberately absent.
-10. Participant membership is dynamic; the interaction is not capped at four people.
-11. A `?research=1` observer joins the same room without participating in sensing or interaction and can request all online participant logs as one aggregate JSON file.
+```bash
+npm run preview
+```
 
-## Interface principles
+Most static hosts need only these settings:
 
-- The Mimosa scene is a transparent overlay so it does not obscure the embedded meeting UI.
-- A small assistant-style dialogue bubble explains the plant's current movement in natural Chinese or English.
-- The active plant has subtle organic motion while remaining calm and non-demanding.
-- The seedling remains visible outside a silent moment; the full mimosa appears only after a waiting member is established.
-- Exact response counts are anonymous: the waiting member sees totals, never identities.
+| Setting | Value |
+| --- | --- |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Environment variable | `VITE_JAAS_APP_ID` |
 
-## Architecture
+The build can be hosted on Tencent Cloud EdgeOne Pages, Cloudflare Pages, Netlify, Vercel, or another static web host. Camera and microphone access require HTTPS outside localhost.
 
-- `src/i18n.ts`: Chinese-to-English runtime copy map and locale helpers.
-- `src/domain/protocol.ts`: typed wire protocol.
-- `src/domain/mimosaMachine.ts`: deterministic state reducer and public/private translations.
-- `src/meeting/JaaSTransport.ts`: JaaS IFrame API adapter and targeted data messages.
-- `src/sensing/WebAudioSpeechActivitySensor.ts`: local, audio-free speech activity classification.
-- `src/domain/silenceCoordinator.ts`: shared timing and invisible coordinator helpers.
-- `src/research/studyLog.ts`: pseudonymous durable local event log.
-- `src/research/observerLogTransfer.ts`: chunked participant-to-observer log transfer.
-- `src/components/MimosaScene.tsx`: bilingual, state-driven ecological scene.
-- `src/App.tsx`: experiment shell and message orchestration.
+### Tencent Cloud flat ZIP
 
-The earlier Jitsi technical spike remains separate under `../spike`; it is evidence and a fallback, not a dependency of this app. Implementation choices that go beyond the proposal are recorded in [`docs/DESIGN_DECISIONS.md`](docs/DESIGN_DECISIONS.md). Use [`docs/EXPERIMENT_CHECKLIST.md`](docs/EXPERIMENT_CHECKLIST.md) for multi-participant and observer acceptance testing.
+Some Tencent Cloud upload flows expect `index.html` and all assets at the root of one ZIP archive. After building, run:
+
+```bash
+python scripts/package_tencent_flat.py
+```
+
+Before using this helper on another computer, edit its `OUTPUT` constant to a valid local destination. The script rewrites asset paths for the flat archive and rejects filenames that Tencent Cloud treats as illegal.
+
+### GitHub Pages
+
+The current Vite configuration assumes deployment at a domain root. If you publish at `https://username.github.io/Mimosa/`, set Vite's `base` option to `/Mimosa/` before building. A custom domain served at its root does not need that change.
+
+## Privacy model
+
+- Speech activity is processed locally in each browser. The sensor distinguishes speech activity from quiet; it does not record, transcribe, upload, or interpret speech content.
+- Mimosa responses are exchanged through Jitsi endpoint data messages.
+- The shared scene shows response categories and, depending on configuration, anonymous totals—not participant identities.
+- Interface position and deferred items may be retained in the current browser so that the page can recover its state.
+- This repository does not include user accounts, a centralized analytics service, or a production authentication backend.
+
+Review your JaaS configuration and privacy notice before using Mimosa in a public or organizational setting.
+
+## Project structure
+
+```text
+src/
+├── components/MimosaScene.tsx        ecological scene and animations
+├── domain/mimosaMachine.ts           interaction state reducer
+├── domain/protocol.ts                typed messages exchanged by clients
+├── meeting/JaaSTransport.ts          Jitsi/JaaS iframe and data adapter
+├── sensing/                           local speech-activity sensing
+├── i18n.ts                            Chinese and English interface copy
+├── App.tsx                            meeting shell and orchestration
+└── App.css                            layout, visual system, and motion
+scripts/
+└── package_tencent_flat.py           optional flat ZIP packaging helper
+docs/                                  design and maintenance notes
+```
+
+## Customize Mimosa
+
+- Edit Chinese and English copy in `src/i18n.ts`.
+- Adjust the scene and SVG elements in `src/components/MimosaScene.tsx`.
+- Refine layout, transparency, motion, and responsive behavior in `src/App.css`.
+- Change interaction states and transitions in `src/domain/mimosaMachine.ts`.
+- Change wire messages only together with `src/domain/protocol.ts` and its tests.
+
+Keep private user choices separate from public room state when adding new features.
+
+## Quality checks
+
+```bash
+npm run test     # run unit and interaction tests
+npm run lint     # check source quality
+npm run build    # type-check and create the production site
+```
+
+Please run all three before opening a pull request.
+
+## Troubleshooting
+
+### The meeting area stays blank
+
+Check that `VITE_JAAS_APP_ID` is valid, reload without aggressive content blockers, and inspect the browser console for a blocked `8x8.vc` script. Also verify that third-party scripts are allowed on your site.
+
+### Participants cannot see one another
+
+Confirm that every participant uses exactly the same room name and the same Mimosa deployment. Check camera/microphone permissions and whether the network blocks WebRTC traffic.
+
+### Two groups entered the same meeting
+
+They reused the same room name. Assign a unique room name to each concurrent group.
+
+### Silence sensing does not start
+
+The browser must grant microphone permission, and at least one utterance must first establish an active conversation. Users may remain muted or unmuted afterward; the logic concerns the end of an utterance and the following quiet period, not the mute-button state.
+
+### The overlay covers an important meeting control
+
+Drag it by its dialogue bubble. Double-click the drag area to reset it later.
+
+## Contributing
+
+Issues and pull requests are welcome. For a substantial behavior change, describe the interaction problem first and explain how the change preserves privacy, low pressure, and role ambiguity. Keep visible strings bilingual and add tests for protocol or state-machine changes.
 
 ## License
 
-Mimosa is released under the [MIT License](LICENSE).
+Mimosa is available under the [MIT License](LICENSE).
