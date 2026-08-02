@@ -16,6 +16,7 @@ The application embeds a Jitsi/JaaS meeting and adds a shared ecological scene. 
 - A complete browser meeting experience powered by Jitsi as a Service (JaaS).
 - Chinese and English interfaces that can be changed before or during a call.
 - Manual open-question marking and optional local silence sensing.
+- A brief, original birdsong-style cue when somebody claims the waiting role, paired with the visual prompt for members whose attention is outside the meeting window.
 - Private, low-effort responses with anonymous shared feedback.
 - A living mimosa scene with growth, leaf movement, sunlight, watering, clouds, seed storage, and restoration animations.
 - Editable deferred questions that can be brought back into the conversation.

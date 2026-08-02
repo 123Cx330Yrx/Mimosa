@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
+import { RoleClaimNotification } from './audio/RoleClaimNotification'
 import { MimosaScene } from './components/MimosaScene'
 import { getEnvironmentSceneCopy } from './domain/environmentScene'
 import { translate, type Locale } from './i18n'
@@ -129,6 +130,8 @@ function App() {
   const seenMessages = useRef(new Set<string>())
   const knownParticipantIds = useRef(new Set<string>())
   const confirmedWaitingMoments = useRef(new Set<string>())
+  const notifiedWaitingMoments = useRef(new Set<string>())
+  const roleClaimNotification = useRef<RoleClaimNotification | null>(null)
   const pendingWaitingClaimId = useRef<string | null>(null)
   const endingTimer = useRef<number | null>(null)
   const seedTransferTimer = useRef<number | null>(null)
@@ -198,6 +201,7 @@ function App() {
   const [deferredStorageReady, setDeferredStorageReady] = useState(false)
 
   useEffect(() => { stateRef.current = state }, [state])
+  useEffect(() => () => roleClaimNotification.current?.dispose(), [])
   useEffect(() => {
     localeRef.current = locale
     document.documentElement.lang = locale === 'en' ? 'en' : 'zh-CN'
@@ -760,6 +764,17 @@ function App() {
     recordEvent('waiting_role_announced', momentId, { claimId })
   }
 
+  function notifyOtherMemberOfWaitingClaim(momentId: string, waitingMemberId: string) {
+    if (isObserver || notifiedWaitingMoments.current.has(momentId)) return
+    if (transportRef.current?.getLocalParticipantId() === waitingMemberId) return
+    notifiedWaitingMoments.current.add(momentId)
+    const played = roleClaimNotification.current?.play() ?? false
+    recordEvent('waiting_role_notification_cued', momentId, {
+      channel: 'audio-and-visual',
+      audioPlayed: played,
+    })
+  }
+
   function acceptWaitingClaim(momentId: string, claimantId: string, claimId: string, proposedQuestion?: string) {
     const transport = transportRef.current
     const localId = transport?.getLocalParticipantId()
@@ -925,6 +940,7 @@ function App() {
             resumedFrom: message.payload.resumedFrom,
           })
           recordEvent('silent_moment_received', message.silentMomentId, { resumed: Boolean(message.payload.resumedFrom) })
+          notifyOtherMemberOfWaitingClaim(message.silentMomentId, senderId)
         }
         break
       case 'WAITING_ROLE_CLAIMED':
@@ -972,6 +988,7 @@ function App() {
           claimId: message.payload.claimId,
           waitingEndpointBoundFrom: 'sender',
         })
+        notifyOtherMemberOfWaitingClaim(message.silentMomentId, senderId)
         break
       }
       case 'PARTICIPANT_CUE': {
@@ -1128,6 +1145,10 @@ function App() {
     }
     const parentNode = document.querySelector<HTMLElement>('#jaas-meeting')
     if (!parentNode) return
+    roleClaimNotification.current ??= new RoleClaimNotification()
+    // Called synchronously from the Join button gesture. Browsers otherwise
+    // block sounds that arrive later while this tab is in the background.
+    void roleClaimNotification.current.unlock()
     setConnection('connecting')
     setError('')
     const resolvedDisplayName = displayName.trim() || (locale === 'en' ? (isObserver ? 'Research observer' : 'Mimosa participant') : (isObserver ? '研究观察员' : 'Mimosa 参与者'))
