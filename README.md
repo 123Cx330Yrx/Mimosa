@@ -16,7 +16,7 @@ The application embeds a Jitsi/JaaS meeting and adds a shared ecological scene. 
 - A complete browser meeting experience powered by Jitsi as a Service (JaaS).
 - Chinese and English interfaces that can be changed before or during a call.
 - Manual open-question marking and optional local silence sensing.
-- A brief, original birdsong-style cue when somebody claims the waiting role, paired with the visual prompt for members whose attention is outside the meeting window.
+- Jitsi's familiar silence-reaction cricket cue when somebody claims the waiting role, paired with the visual prompt for members whose attention is outside the meeting window.
 - Private, low-effort responses with anonymous shared feedback.
 - A living mimosa scene with growth, leaf movement, sunlight, watering, clouds, seed storage, and restoration animations.
 - Editable deferred questions that can be brought back into the conversation.
@@ -239,3 +239,5 @@ Issues and pull requests are welcome. For a substantial behavior change, describ
 ## License
 
 Mimosa is available under the [MIT License](LICENSE).
+
+The bundled Jitsi silence-reaction sound is licensed separately under Apache-2.0; see [Third-party notices](THIRD_PARTY_NOTICES.md).

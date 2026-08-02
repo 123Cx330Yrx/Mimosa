@@ -16,9 +16,17 @@ entries: dict[str, bytes] = {
     "index.html": index.encode("utf-8"),
     "favicon.svg": (DIST / "favicon.svg").read_bytes(),
     "icons.svg": (DIST / "icons.svg").read_bytes(),
+    "reactions-crickets.mp3": (DIST / "sounds" / "reactions-crickets.mp3").read_bytes(),
+    "JITSI_APACHE-2.0.txt": (DIST / "sounds" / "JITSI_APACHE-2.0.txt").read_bytes(),
 }
 for asset in asset_files:
-    entries[asset.name] = asset.read_bytes()
+    content = asset.read_bytes()
+    if asset.suffix == ".js":
+        content = content.replace(
+            b"/sounds/reactions-crickets.mp3",
+            b"./reactions-crickets.mp3",
+        )
+    entries[asset.name] = content
 
 invalid = re.compile(r'[\\/:*?"<>|]')
 for name in entries:
