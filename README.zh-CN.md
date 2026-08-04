@@ -36,6 +36,18 @@ Mimosa 是一款面向在线会议的双语浏览器协作工具。它用轻松�
 
 这里的生态场景提供的是行动线索，而不是对人的诊断。Mimosa 不会声称自己知道某个人为什么沉默。
 
+## 简单提醒版（Baseline）
+
+同一套部署中也包含一个有意保持简洁的对照条件。在网址中加入 `condition=baseline` 即可进入。
+
+1. 房间中至少先发生一次发言。
+2. 此后讨论持续安静 8 秒，所有参与者会听到与 Mimosa 条件相同的虫鸣提示音。
+3. 页面显示一条持续 5 秒、不可点击的中性提醒：“讨论暂时安静下来了。可以继续思考，也可以一起决定接下来怎么推进。”
+4. 如果有人重新开口，提醒会提前渐隐。
+5. 同一段连续沉默只触发一次；出现新的发言后，系统才会重新等待下一段 8 秒沉默。
+
+简单提醒版不包含含羞草、角色选择、私密回应、环境反馈、关怀动作或种子暂存。两种条件使用相同的会议、8 秒阈值、提示音、语言选项、房间成员机制和匿名事件日志。
+
 ## 直接使用在线版本
 
 打开 [https://mimosa-srtp.com](https://mimosa-srtp.com)，输入房间名和显示名后加入会议。使用同一个房间名的人会进入同一场会议；不同房间名对应彼此独立的会议。
@@ -43,8 +55,10 @@ Mimosa 是一款面向在线会议的双语浏览器协作工具。它用轻松�
 也可以提前准备好链接：
 
 ```text
-中文：https://mimosa-srtp.com/?room=community-weekly&name=Alex
-英文：https://mimosa-srtp.com/?room=community-weekly&name=Alex&lang=en
+Mimosa 中文：https://mimosa-srtp.com/?condition=mimosa&room=community-weekly&name=Alex
+Mimosa 英文：https://mimosa-srtp.com/?condition=mimosa&room=community-weekly&name=Alex&lang=en
+简单提醒版中文：https://mimosa-srtp.com/?condition=baseline&room=community-weekly&name=Alex
+简单提醒版英文：https://mimosa-srtp.com/?condition=baseline&room=community-weekly&name=Alex&lang=en
 ```
 
 同时开展多场会议时，请为每组分配不同的房间名。建议只使用简单的字母、数字和连字符，例如 `team-a-2026-07-31`。
@@ -106,6 +120,19 @@ VITE_RESPONSE_COUNT_MODE=exact
 ### 切换语言
 
 使用界面中的语言按钮，或在链接中加入 `lang=en`。未指定该参数时，Mimosa 默认显示中文。
+
+### 切换实验条件
+
+`condition=mimosa` 表示完整 Mimosa 互动版，`condition=baseline` 表示简单提醒版。网址不写 `condition` 时，默认进入 Mimosa。
+
+同一个 baseline 房间的参与者链接与非参与式观察端链接示例：
+
+```text
+参与者：https://mimosa-srtp.com/?condition=baseline&room=group-a&name=Participant-A
+观察端：https://mimosa-srtp.com/?condition=baseline&room=group-a&name=Researcher&research=1
+```
+
+同一场会议中的所有成员和观察员必须使用相同的 `condition` 与 `room`。系统会把不同条件映射到不同的底层 Jitsi 房间，因此 baseline 的 `group-a` 不会与 Mimosa 的 `group-a` 混入彼此的音视频或研究消息。观察端不会参与沉默感知和互动，但可以标记实验阶段，并集中收集带有条件标签的事件日志。
 
 ### 移动含羞草
 

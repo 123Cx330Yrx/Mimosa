@@ -1,4 +1,4 @@
-export const MIMOSA_PROTOCOL_VERSION = 14 as const
+export const MIMOSA_PROTOCOL_VERSION = 15 as const
 
 export type MomentRole = 'unassigned' | 'waiting' | 'responding' | 'dismissed'
 export type MomentTrigger = 'manual' | 'silence-detected'
@@ -49,6 +49,10 @@ export type MimosaEnvelope =
       speaking: boolean
       observedAt: string
       source: SpeechActivitySource
+    }>
+  | EnvelopeBase<'BASELINE_SILENCE_NOTICE', {
+      detectedAt: string
+      visibleForMs: number
     }>
   | EnvelopeBase<'SILENCE_CANDIDATE_CREATED', {
       question?: string

@@ -1,12 +1,13 @@
 import { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import { RoleClaimNotification } from './audio/RoleClaimNotification'
+import { BaselineNotice } from './components/BaselineNotice'
 import { MimosaScene } from './components/MimosaScene'
 import { getEnvironmentSceneCopy } from './domain/environmentScene'
 import { translate, type Locale } from './i18n'
 import { createInitialState, getCareEffect, getCueEffect, mimosaReducer, toPublicSnapshot } from './domain/mimosaMachine'
 import { countParticipantCues, getStudyParticipants } from './domain/participantRoles'
-import { bindSnapshotToSender, createEnvelope, type CareAction, type EnvironmentState, type ExperimentMarker, type MimosaEnvelope, type MomentRole, type ParticipantCue, type SilentMomentOutcome } from './domain/protocol'
+import { bindSnapshotToSender, createEnvelope, MIMOSA_PROTOCOL_VERSION, type CareAction, type EnvironmentState, type ExperimentMarker, type MimosaEnvelope, type MomentRole, type ParticipantCue, type SilentMomentOutcome } from './domain/protocol'
 import {
   electCoordinatorCandidate,
   isRoomSpeaking,
@@ -34,6 +35,7 @@ import {
   type LogTransferChunk,
   type StudyLogBundle,
 } from './research/observerLogTransfer'
+import { conditionMeetingRoomName, conditionRoomId, parseStudyCondition } from './domain/studyCondition'
 
 const cueLabels: Record<ParticipantCue, { label: string; detail: string }> = {
   NEED_TIME: { label: '需要一点时间', detail: '我还在思考或组织语言' },
@@ -103,6 +105,8 @@ interface SeedTransfer {
 // The last bloom particles settle just before 3.8 s. Starting closure after
 // that boundary prevents the entrance animation from being cut off midway.
 const PLANT_CLOSE_START_DELAY_MS = 4_050
+const BASELINE_NOTICE_DURATION_MS = 5_000
+const BASELINE_NOTICE_EXIT_MS = 520
 const DEFAULT_JAAS_APP_ID = 'vpaas-magic-cookie-4ea72651a0a245cfbec2305213bcdc29'
 const RESPONSE_COUNT_MODE = (
   import.meta.env.VITE_RESPONSE_COUNT_MODE || 'exact'
@@ -110,6 +114,8 @@ const RESPONSE_COUNT_MODE = (
 
 function App() {
   const initialParams = new URLSearchParams(window.location.search)
+  const condition = parseStudyCondition(window.location.search)
+  const isMimosaCondition = condition === 'mimosa'
   const accessMode = (() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('research') === '1') return 'research'
@@ -131,6 +137,7 @@ function App() {
   const knownParticipantIds = useRef(new Set<string>())
   const confirmedWaitingMoments = useRef(new Set<string>())
   const notifiedWaitingMoments = useRef(new Set<string>())
+  const notifiedBaselineMoments = useRef(new Set<string>())
   const roleClaimNotification = useRef<RoleClaimNotification | null>(null)
   const pendingWaitingClaimId = useRef<string | null>(null)
   const endingTimer = useRef<number | null>(null)
@@ -142,6 +149,7 @@ function App() {
   const candidateTimer = useRef<number | null>(null)
   const candidateExitTimer = useRef<number | null>(null)
   const silenceTimer = useRef<number | null>(null)
+  const baselineNoticeTimer = useRef<number | null>(null)
   const recoveryTimer = useRef<number | null>(null)
   const speechSensorRef = useRef<WebAudioSpeechActivitySensor | null>(null)
   const participantActivity = useRef(new Map<string, ParticipantActivity>())
@@ -198,9 +206,13 @@ function App() {
   const [recoverySuggested, setRecoverySuggested] = useState(false)
   const [candidateNotice, setCandidateNotice] = useState('')
   const [candidateExiting, setCandidateExiting] = useState(false)
+  const [baselineNotice, setBaselineNotice] = useState<{ id: string; leaving: boolean } | null>(null)
+  const baselineNoticeRef = useRef<{ id: string; leaving: boolean } | null>(null)
+  const [baselineNoticeCount, setBaselineNoticeCount] = useState(0)
   const [deferredStorageReady, setDeferredStorageReady] = useState(false)
 
   useEffect(() => { stateRef.current = state }, [state])
+  useEffect(() => { baselineNoticeRef.current = baselineNotice }, [baselineNotice])
   useEffect(() => () => roleClaimNotification.current?.dispose(), [])
   useEffect(() => {
     localeRef.current = locale
@@ -274,6 +286,7 @@ function App() {
     if (candidateTimer.current) window.clearTimeout(candidateTimer.current)
     if (candidateExitTimer.current) window.clearTimeout(candidateExitTimer.current)
     if (silenceTimer.current) window.clearTimeout(silenceTimer.current)
+    if (baselineNoticeTimer.current) window.clearTimeout(baselineNoticeTimer.current)
     if (recoveryTimer.current) window.clearTimeout(recoveryTimer.current)
     speechSensorRef.current?.stop()
   }, [])
@@ -301,6 +314,46 @@ function App() {
   function clearSilenceTimer() {
     if (silenceTimer.current) window.clearTimeout(silenceTimer.current)
     silenceTimer.current = null
+  }
+
+  function clearBaselineNoticeTimer() {
+    if (baselineNoticeTimer.current) window.clearTimeout(baselineNoticeTimer.current)
+    baselineNoticeTimer.current = null
+  }
+
+  function dismissBaselineNotice(reason: 'timeout' | 'speech-resumed') {
+    const current = baselineNoticeRef.current
+    if (!current || current.leaving) return
+    clearBaselineNoticeTimer()
+    const leaving = { ...current, leaving: true }
+    baselineNoticeRef.current = leaving
+    setBaselineNotice(leaving)
+    recordEvent('baseline_notice_dismissed', current.id, { reason })
+    baselineNoticeTimer.current = window.setTimeout(() => {
+      baselineNoticeTimer.current = null
+      baselineNoticeRef.current = null
+      setBaselineNotice(null)
+    }, BASELINE_NOTICE_EXIT_MS)
+  }
+
+  function showBaselineNotice(momentId: string, source: 'coordinator' | 'room-message') {
+    if (isObserver || condition !== 'baseline' || notifiedBaselineMoments.current.has(momentId)) return
+    notifiedBaselineMoments.current.add(momentId)
+    clearBaselineNoticeTimer()
+    const notice = { id: momentId, leaving: false }
+    baselineNoticeRef.current = notice
+    setBaselineNotice(notice)
+    setBaselineNoticeCount((count) => count + 1)
+    const audioPlayed = roleClaimNotification.current?.play() ?? false
+    recordEvent('baseline_notice_shown', momentId, {
+      source,
+      visibleForMs: BASELINE_NOTICE_DURATION_MS,
+      audioPlayed,
+    })
+    baselineNoticeTimer.current = window.setTimeout(
+      () => dismissBaselineNotice('timeout'),
+      BASELINE_NOTICE_DURATION_MS,
+    )
   }
 
   function clearRecoveryTimer() {
@@ -358,6 +411,7 @@ function App() {
         momentId,
         details: {
           ...details,
+          condition,
           participantCount: participantsRef.current.length,
           localRole: stateRef.current.localRole,
         },
@@ -372,7 +426,7 @@ function App() {
   function baseFields(momentId: string) {
     const transport = transportRef.current
     return {
-      roomId: `${appId}/${roomName}`,
+      roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
       silentMomentId: momentId,
       senderId: transport?.getLocalParticipantId() ?? 'local',
     }
@@ -526,6 +580,7 @@ function App() {
     const payload = {
       exportedAt: new Date().toISOString(),
       roomId: `${appId}/${roomName}`,
+      condition,
       requestId: observerLogRequestId,
       participantCount: studyParticipants.length,
       logs: Object.values(observerLogs),
@@ -614,7 +669,8 @@ function App() {
         isRoomSpeaking(participantActivity.current, Date.now()) ||
         technicalCoordinatorIdRef.current !== transportRef.current?.getLocalParticipantId()
       ) return
-      createSilenceCandidate('automatic')
+      if (condition === 'baseline') createBaselineSilenceNotice()
+      else createSilenceCandidate('automatic')
     }, delay)
   }
 
@@ -655,6 +711,9 @@ function App() {
       hasObservedSpeech.current = true
       lastRoomActivityAt.current = observedAt
       clearSilenceTimer()
+      if (condition === 'baseline' && baselineNoticeRef.current) {
+        dismissBaselineNotice('speech-resumed')
+      }
       const moment = stateRef.current.activeMoment
       if (moment?.phase === 'ROLE_CONFIRMATION' &&
         technicalCoordinatorIdRef.current === transportRef.current?.getLocalParticipantId()) {
@@ -804,6 +863,7 @@ function App() {
   function handleMessage(message: MimosaEnvelope, senderId: string) {
     if (seenMessages.current.has(message.messageId)) return
     seenMessages.current.add(message.messageId)
+    if (message.roomId !== conditionRoomId(appId.trim(), roomName.trim(), condition)) return
     const current = stateRef.current
     const transport = transportRef.current
 
@@ -872,6 +932,22 @@ function App() {
           Number.isFinite(observedAt) ? observedAt : Date.now(),
           message.payload.source,
         )
+        break
+      }
+      case 'BASELINE_SILENCE_NOTICE': {
+        if (condition !== 'baseline') break
+        hasObservedSpeech.current = false
+        setSilenceSecondsLeft(null)
+        setLocalSpeechState('waiting')
+        if (isObserver) {
+          setBaselineNoticeCount((count) => count + 1)
+          recordEvent('baseline_notice_observed', message.silentMomentId, {
+            detectedAt: message.payload.detectedAt,
+            visibleForMs: message.payload.visibleForMs,
+          })
+        } else {
+          showBaselineNotice(message.silentMomentId, 'room-message')
+        }
         break
       }
       case 'SILENCE_CANDIDATE_CREATED':
@@ -1154,7 +1230,7 @@ function App() {
     const resolvedDisplayName = displayName.trim() || (locale === 'en' ? (isObserver ? 'Research observer' : 'Mimosa participant') : (isObserver ? '研究观察员' : 'Mimosa 参与者'))
     const transport = new JaaSTransport({
       appId: appId.trim(),
-      roomName: roomName.trim(),
+      roomName: conditionMeetingRoomName(roomName.trim(), condition),
       displayName: isObserver ? `${locale === 'en' ? 'Observer' : '观察员'} · ${resolvedDisplayName}` : resolvedDisplayName,
       parentNode,
     })
@@ -1270,9 +1346,9 @@ function App() {
       if (!snapshot || !localId) return
       for (const participant of added) {
         if (participant.id === localId) continue
-        if (current.deferredMoments.length > 0) {
+        if (condition === 'mimosa' && current.deferredMoments.length > 0) {
           transport.sendTo(participant.id, createEnvelope({
-            roomId: `${appId.trim()}/${roomName.trim()}`,
+            roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
             silentMomentId: '',
             senderId: localId,
             type: 'DEFERRED_STATE_SNAPSHOT',
@@ -1280,7 +1356,7 @@ function App() {
           }))
         }
         const sendSnapshot = () => transport.sendTo(participant.id, createEnvelope({
-            roomId: `${appId.trim()}/${roomName.trim()}`,
+            roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
             silentMomentId: snapshot.id,
             senderId: localId,
             type: 'STATE_SNAPSHOT',
@@ -1297,6 +1373,9 @@ function App() {
       setConnection('connected')
       recordEvent('meeting_connected')
       try {
+        if (condition !== 'mimosa') {
+          setDeferredStorageReady(true)
+        } else {
         const removedStored = localStorage.getItem(
           `mimosa:deferred-removed:${appId.trim()}:${roomName.trim()}`,
         )
@@ -1315,6 +1394,7 @@ function App() {
               (moment) => !removedDeferredMomentIdsRef.current.has(moment?.id),
             ),
           })
+        }
         }
       } catch {
         recordEvent('deferred_storage_restore_failed')
@@ -1335,6 +1415,7 @@ function App() {
         if (silenceDetectionEnabledRef.current && !joinedMuted) void startSpeechSensor()
       }
       const requestSnapshot = () => {
+        if (condition !== 'mimosa') return
         transport.broadcast(buildEnvelope({ ...baseFields(''), type: 'STATE_REQUEST', payload: {} }))
         transport.broadcast(buildEnvelope({ ...baseFields(''), type: 'DEFERRED_STATE_REQUEST', payload: {} }))
       }
@@ -1414,6 +1495,33 @@ function App() {
     }))
     scheduleProgressiveClosure(id)
     recordEvent(resumedFrom ? 'deferred_question_resumed' : 'silent_moment_created', id, { resumedFrom })
+  }
+
+  function createBaselineSilenceNotice() {
+    if (isObserver || condition !== 'baseline') return
+    const transport = transportRef.current
+    const localId = transport?.getLocalParticipantId()
+    if (!transport || !localId || isRoomSpeaking(participantActivity.current, Date.now())) return
+    clearSilenceTimer()
+    const id = crypto.randomUUID()
+    const detectedAt = new Date().toISOString()
+    hasObservedSpeech.current = false
+    setSilenceSecondsLeft(null)
+    setLocalSpeechState('waiting')
+    const message = buildEnvelope({
+      ...baseFields(id),
+      type: 'BASELINE_SILENCE_NOTICE',
+      payload: {
+        detectedAt,
+        visibleForMs: BASELINE_NOTICE_DURATION_MS,
+      },
+    })
+    broadcastReliably(message)
+    showBaselineNotice(id, 'coordinator')
+    recordEvent('baseline_silence_detected', id, {
+      thresholdMs: ROOM_SILENCE_THRESHOLD_MS,
+      visibleForMs: BASELINE_NOTICE_DURATION_MS,
+    })
   }
 
   function createSilenceCandidate(source: 'automatic' | 'manual' = 'manual') {
@@ -1644,7 +1752,8 @@ function App() {
       study: {
         ...studyIdentity,
         roomName,
-        protocolVersion: 14,
+        condition,
+        protocolVersion: MIMOSA_PROTOCOL_VERSION,
         settings: {
           roomSilenceThresholdMs: ROOM_SILENCE_THRESHOLD_MS,
           roleConfirmationWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
@@ -1691,6 +1800,8 @@ function App() {
   const privateCueCount = Object.keys(state.privateCues).length
   const localRoleLabel = isObserver
     ? t('研究观察')
+    : condition === 'baseline'
+      ? (locale === 'en' ? 'Simple reminder' : '简单提醒')
     : !active
     ? t('普通成员')
     : state.localRole === 'waiting'
@@ -1702,8 +1813,8 @@ function App() {
           : t('尚未认领')
 
   return (
-    <main className={`app-shell ${connected ? 'is-connected' : 'is-welcome'}`}>
-      {seedTransfer?.stage === 'flying' && (
+    <main className={`app-shell app-shell--${condition} ${isObserver ? 'is-observer' : ''} ${connected ? 'is-connected' : 'is-welcome'}`}>
+      {isMimosaCondition && seedTransfer?.stage === 'flying' && (
         <div
           className="seed-flight"
           style={seedTransfer.style}
@@ -1716,7 +1827,7 @@ function App() {
           <i />
         </div>
       )}
-      {seedTransfer && (
+      {isMimosaCondition && seedTransfer && (
         <div ref={seedBankTargetRef} className={`seed-transfer-dock seed-transfer-dock--${seedTransfer.stage}`} aria-hidden="true">
           <i />
           <span>{t('种子暂存区')}</span>
@@ -1724,8 +1835,9 @@ function App() {
       )}
       <a className="skip-link" href="#meeting-main">{locale === 'en' ? 'Skip to meeting and interaction area' : '跳到会议与互动区'}</a>
       <header className="app-header">
-        <div className="brand-lockup"><span className="brand-seed" aria-hidden="true" /><div><p className="product-name">Mimosa</p><p className="product-purpose">{t('让沉默成为彼此照顾的入口')}</p></div></div>
+        <div className="brand-lockup"><span className="brand-seed" aria-hidden="true" /><div><p className="product-name">{isMimosaCondition ? 'Mimosa' : (locale === 'en' ? 'Meeting reminder' : '会议提醒')}</p><p className="product-purpose">{isMimosaCondition ? t('让沉默成为彼此照顾的入口') : (locale === 'en' ? 'A simple cue when the conversation pauses' : '在讨论停顿时给出简单提示')}</p></div></div>
         <div className="header-status-group">
+          <span className={`condition-pill condition-pill--${condition}`}>{isMimosaCondition ? 'Mimosa' : 'Baseline'}</span>
           <div className="language-switch" role="group" aria-label="Language">
             <button type="button" className={locale === 'zh' ? 'is-active' : ''} aria-pressed={locale === 'zh'} onClick={() => setLocale('zh')}>中文</button>
             <button type="button" className={locale === 'en' ? 'is-active' : ''} aria-pressed={locale === 'en'} onClick={() => setLocale('en')}>EN</button>
@@ -1737,7 +1849,7 @@ function App() {
 
       {!connected && (
         <section className="join-panel" aria-label={locale === 'en' ? 'Join meeting' : '加入会议'}>
-          <div><h1>{t('先进入同一个会议房间')}</h1><p>{t('输入共同约定的房间名和显示名，即可进入会议。')}</p></div>
+          <div><h1>{t('先进入同一个会议房间')}</h1><p>{isMimosaCondition ? t('输入共同约定的房间名和显示名，即可进入会议。') : (locale === 'en' ? 'Join the assigned room. A brief reminder will appear after a sustained pause.' : '进入分配给你的小组房间；讨论持续安静时，页面会给出一条简短提醒。')}</p></div>
           <div className="join-fields join-fields--configured">
             <label className="join-field join-field--room">{t('房间名')}<input value={roomName} placeholder={locale === 'en' ? 'e.g. group-a-01' : '例如：group-a-01'} autoComplete="off" onChange={(event) => setRoomName(event.target.value)} /><small>{locale === 'en' ? 'Different IDs create separate rooms for concurrent study groups.' : '不同编号会进入彼此独立的会议，适合多组实验同时进行。'}</small></label>
             <label className="join-field join-field--name">{t('显示名')}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
@@ -1749,22 +1861,24 @@ function App() {
 
       <section className="meeting-layout" id="meeting-main" tabIndex={-1}>
         <div className="meeting-stage">
-          <div id="jaas-meeting" className="meeting-surface"><div className="meeting-placeholder"><div className="placeholder-garden" aria-hidden="true"><span /><i /><i /></div><span>{t('共享会议花园')}</span><strong>{t('加入后，彼此的画面会在这里展开')}</strong><p>{t('幼苗会在右下角等候；进入沉默时刻后，它才生长为含羞草。')}</p></div></div>
-          <MimosaScene environments={visualPreview?.environments ?? state.environments} plant={visualPreview?.plant ?? state.plant} active={visualPreview?.active ?? plantActive} resumed={Boolean(state.activeMoment?.resumedFrom)} reaction={sceneReaction} breeze={breezeActive} alive={visualPreview?.active ?? plantActive} locale={locale} />
+          <div id="jaas-meeting" className="meeting-surface"><div className="meeting-placeholder">{isMimosaCondition ? <div className="placeholder-garden" aria-hidden="true"><span /><i /><i /></div> : <div className="placeholder-signal" aria-hidden="true"><i /><i /><i /><i /></div>}<span>{isMimosaCondition ? t('共享会议花园') : (locale === 'en' ? 'Shared meeting room' : '共享会议房间')}</span><strong>{t('加入后，彼此的画面会在这里展开')}</strong><p>{isMimosaCondition ? t('幼苗会在右下角等候；进入沉默时刻后，它才生长为含羞草。') : (locale === 'en' ? 'The meeting stays unchanged until a quiet-moment reminder appears.' : '除持续安静时出现一条简短提醒外，会议界面不会加入其他互动。')}</p></div></div>
+          {isMimosaCondition && <MimosaScene environments={visualPreview?.environments ?? state.environments} plant={visualPreview?.plant ?? state.plant} active={visualPreview?.active ?? plantActive} resumed={Boolean(state.activeMoment?.resumedFrom)} reaction={sceneReaction} breeze={breezeActive} alive={visualPreview?.active ?? plantActive} locale={locale} />}
+          {baselineNotice && <BaselineNotice locale={locale} leaving={baselineNotice.leaving} />}
         </div>
 
+        {(isMimosaCondition || isObserver) && (
         <aside className={`interaction-rail interaction-rail--${state.localRole} ${active ? 'is-active' : ''} ${candidateExiting ? 'is-candidate-exiting' : ''} ${!connected ? 'is-disconnected' : ''}`} aria-label={locale === 'en' ? 'Mimosa interaction area' : 'Mimosa 互动区'}>
           {!connected && (
             <section className="rail-welcome">
-              <div className="rail-welcome-mark" aria-hidden="true"><span /><i /><i /></div>
+              {isMimosaCondition ? <div className="rail-welcome-mark" aria-hidden="true"><span /><i /><i /></div> : <div className="rail-welcome-signal" aria-hidden="true"><i /><i /><i /><i /></div>}
               <span className="eyebrow">{t('开始之前')}</span>
-              <h2>{t('让每个人先进入同一个房间')}</h2>
-              <p>{t('入会后，每轮沉默都由成员自己确认当下需要的位置。')}</p>
-              <ol>
+              <h2>{isMimosaCondition ? t('让每个人先进入同一个房间') : (locale === 'en' ? 'Observe the reminder condition' : '观察简单提醒条件')}</h2>
+              <p>{isMimosaCondition ? t('入会后，每轮沉默都由成员自己确认当下需要的位置。') : (locale === 'en' ? 'The observer does not enter silence sensing or receive participant prompts.' : '观察端不参与沉默感知，也不会收到参与者提示。')}</p>
+              {isMimosaCondition && <ol>
                 <li><span>1</span><div><strong>{t('以普通成员进入')}</strong><small>{t('每轮角色都在沉默发生后由成员自己认领')}</small></div></li>
                 <li><span>2</span><div><strong>{t('共同进入会议')}</strong><small>{t('音视频仍由 JaaS 提供')}</small></div></li>
                 <li><span>3</span><div><strong>{t('让沉默被温和接住')}</strong><small>{t('每份回应都会轻轻落进同一座花园')}</small></div></li>
-              </ol>
+              </ol>}
             </section>
           )}
           {isObserver && connected && (
@@ -1773,19 +1887,29 @@ function App() {
               <span className="eyebrow">{locale === 'en' ? 'Research observer · non-participating' : '研究观察端 · 不参与互动'}</span>
               <span className={`phase-dot ${active ? 'is-active' : ''}`}>{experimentMarker === 'START' ? (locale === 'en' ? 'Study in progress' : '实验进行中') : experimentMarker === 'END' ? (locale === 'en' ? 'Study ended' : '实验已结束') : (locale === 'en' ? 'Awaiting study marker' : '等待实验标记')}</span>
               </div>
-              <h2>{active ? state.activeMoment?.question : (locale === 'en' ? 'No active Mimosa moment' : '当前没有进行中的 Mimosa 时刻')}</h2>
-              <p>{locale === 'en' ? 'Observers are excluded from participant counts, role selection, and silence sensing.' : '观察员不计入参与人数、不参与角色认领，也不会影响沉默检测。'}</p>
+              <h2>{isMimosaCondition
+                ? (active ? state.activeMoment?.question : (locale === 'en' ? 'No active Mimosa moment' : '当前没有进行中的 Mimosa 时刻'))
+                : (locale === 'en' ? 'Simple reminder condition' : '简单提醒条件')}</h2>
+              <p>{isMimosaCondition
+                ? (locale === 'en' ? 'Observers are excluded from participant counts, role selection, and silence sensing.' : '观察员不计入参与人数、不参与角色认领，也不会影响沉默检测。')
+                : (locale === 'en' ? 'After 8 seconds of room silence, participants receive one sound and a five-second non-interactive reminder.' : '房间持续安静 8 秒后，参与者会收到一次提示音和一条持续 5 秒的非交互提醒。')}</p>
               <dl className="observer-metrics">
                 <div><dt>{locale === 'en' ? 'Participants' : '实验参与者'}</dt><dd>{studyParticipants.length}</dd></div>
-                <div><dt>{locale === 'en' ? 'Anonymous responses' : '匿名回应'}</dt><dd>{Object.values(observerCueCounts).reduce((sum, count) => sum + count, 0)}</dd></div>
-                <div><dt>{locale === 'en' ? 'Need time' : '需要时间'}</dt><dd>{observerCueCounts.NEED_TIME}</dd></div>
-                <div><dt>{locale === 'en' ? 'Checking' : '正在确认'}</dt><dd>{observerCueCounts.CHECKING}</dd></div>
-                <div><dt>{locale === 'en' ? 'Speaking difficulty' : '社交压力'}</dt><dd>{observerCueCounts.SOCIAL_PRESSURE}</dd></div>
+                {isMimosaCondition ? <>
+                  <div><dt>{locale === 'en' ? 'Anonymous responses' : '匿名回应'}</dt><dd>{Object.values(observerCueCounts).reduce((sum, count) => sum + count, 0)}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Need time' : '需要时间'}</dt><dd>{observerCueCounts.NEED_TIME}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Checking' : '正在确认'}</dt><dd>{observerCueCounts.CHECKING}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Speaking difficulty' : '社交压力'}</dt><dd>{observerCueCounts.SOCIAL_PRESSURE}</dd></div>
+                </> : <>
+                  <div><dt>{locale === 'en' ? 'Reminders' : '已触发提醒'}</dt><dd>{baselineNoticeCount}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Silence threshold' : '沉默阈值'}</dt><dd>8s</dd></div>
+                  <div><dt>{locale === 'en' ? 'Display time' : '显示时长'}</dt><dd>5s</dd></div>
+                </>}
               </dl>
               <div className="observer-actions">
                 <button type="button" onClick={() => sendExperimentMarker('START')}>{locale === 'en' ? 'Mark study start' : '标记实验开始'}</button>
                 <button type="button" onClick={() => sendExperimentMarker('END')}>{locale === 'en' ? 'Mark study end' : '标记实验结束'}</button>
-                <button type="button" disabled={!active} onClick={cancelFalsePositiveMoment}>{locale === 'en' ? 'Dismiss false trigger' : '撤销本次误触发'}</button>
+                {isMimosaCondition && <button type="button" disabled={!active} onClick={cancelFalsePositiveMoment}>{locale === 'en' ? 'Dismiss false trigger' : '撤销本次误触发'}</button>}
                 <button type="button" onClick={requestParticipantLogs}>{locale === 'en' ? 'Collect participant logs' : '向参与者收集日志'}</button>
                 <button type="button" disabled={Object.keys(observerLogs).length === 0} onClick={downloadAggregatedLogs}>
                   {locale === 'en' ? 'Download combined logs' : '下载汇总日志'}（{Object.keys(observerLogs).length}/{studyParticipants.length}）
@@ -2012,14 +2136,17 @@ function App() {
               <div><dt>{locale === 'en' ? 'Pseudonymous ID' : '匿名编号'}</dt><dd>{studyIdentity.participantPseudonym}</dd></div>
               {showResearchControls && <>
                 <div><dt>{locale === 'en' ? 'Observer' : '观察端'}</dt><dd>{locale === 'en' ? 'Non-participating' : '不参与交互'}</dd></div>
+                <div><dt>{locale === 'en' ? 'Condition' : '当前条件'}</dt><dd>{isMimosaCondition ? 'Mimosa' : 'Baseline'}</dd></div>
                 <div><dt>{locale === 'en' ? 'Participants' : '实验参与者'}</dt><dd>{studyParticipants.length}</dd></div>
                 <div><dt>{locale === 'en' ? 'Observers' : '观察员'}</dt><dd>{observerIds.size}</dd></div>
                 <div><dt>{locale === 'en' ? 'Silence trigger' : '沉默触发'}</dt><dd>{locale === 'en' ? '8 seconds' : '8 秒'}</dd></div>
-                <div><dt>{locale === 'en' ? 'Role-selection window' : '角色确认窗口'}</dt><dd>{locale === 'en' ? '12 seconds' : '12 秒'}</dd></div>
-                <div><dt>{locale === 'en' ? 'Leaf movement' : '叶片合拢'}</dt><dd>{locale === 'en' ? 'Begins after growth' : '生长完成后立即缓慢开始'}</dd></div>
-                <div><dt>{locale === 'en' ? 'Response count' : '回应人数'}</dt><dd>{RESPONSE_COUNT_MODE === 'exact' ? (locale === 'en' ? 'Exact anonymous summary' : '精确匿名汇总') : RESPONSE_COUNT_MODE === 'coarse' ? (locale === 'en' ? 'Coarse' : '粗粒度') : (locale === 'en' ? 'Hidden' : '隐藏')}</dd></div>
+                {isMimosaCondition ? <>
+                  <div><dt>{locale === 'en' ? 'Role-selection window' : '角色确认窗口'}</dt><dd>{locale === 'en' ? '12 seconds' : '12 秒'}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Leaf movement' : '叶片合拢'}</dt><dd>{locale === 'en' ? 'Begins after growth' : '生长完成后立即缓慢开始'}</dd></div>
+                  <div><dt>{locale === 'en' ? 'Response count' : '回应人数'}</dt><dd>{RESPONSE_COUNT_MODE === 'exact' ? (locale === 'en' ? 'Exact anonymous summary' : '精确匿名汇总') : RESPONSE_COUNT_MODE === 'coarse' ? (locale === 'en' ? 'Coarse' : '粗粒度') : (locale === 'en' ? 'Hidden' : '隐藏')}</dd></div>
+                </> : <div><dt>{locale === 'en' ? 'Reminder duration' : '提醒时长'}</dt><dd>{locale === 'en' ? '5 seconds' : '5 秒'}</dd></div>}
                 <div><dt>{locale === 'en' ? 'Collected logs' : '集中日志'}</dt><dd>{Object.keys(observerLogs).length}/{studyParticipants.length}</dd></div>
-                <div><dt>{locale === 'en' ? 'Protocol' : '协议'}</dt><dd>v14</dd></div>
+                <div><dt>{locale === 'en' ? 'Protocol' : '协议'}</dt><dd>v{MIMOSA_PROTOCOL_VERSION}</dd></div>
               </>}
             </dl>
             <p className="sensor-privacy-note">{showResearchControls ? (locale === 'en' ? 'The observer remains muted and is excluded from silence sensing. Logs are requested through the room data channel and contain no audio, transcripts, or real names.' : '研究观察端保持闭麦，不参与自动沉默感知。日志通过房间数据通道按需收集，不包含音频、转写或真实姓名。') : (locale === 'en' ? 'Only pseudonymous interaction events are stored on this device—never audio, transcripts, or real names. Researchers can request logs at the end of the session; local export remains available as a fallback.' : '本页仅保存本机匿名交互事件，不包含音频、转写或真实姓名。研究者可以在实验结束后集中请求日志；本地导出保留为故障备用。')}</p>
@@ -2029,6 +2156,7 @@ function App() {
             </div>
           </details>}
         </aside>
+        )}
       </section>
     </main>
   )

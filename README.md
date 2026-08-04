@@ -36,6 +36,18 @@ The application embeds a Jitsi/JaaS meeting and adds a shared ecological scene. 
 
 The ecological scene is deliberately an action cue rather than a diagnosis. Mimosa does not claim that it knows why a person is silent.
 
+## Simple reminder condition
+
+The same deployment also includes a deliberately minimal comparison condition. Add `condition=baseline` to the URL to use it.
+
+1. At least one utterance occurs in the room.
+2. When the conversation then remains quiet for 8 seconds, the room receives the same cricket cue used by Mimosa.
+3. A non-interactive reminder appears for 5 seconds: “The conversation has gone quiet for a moment. Take your time, or decide together how to move forward.”
+4. The reminder fades early if speech resumes.
+5. It does not repeat during the same uninterrupted silence. A new utterance re-arms the detector.
+
+This condition contains no plant, role selection, private response, ecological feedback, care action, or seed bank. Both conditions use the same meeting, silence threshold, sound, language options, room membership, and pseudonymous event logging.
+
 ## Use the hosted version
 
 Open [https://mimosa-srtp.com](https://mimosa-srtp.com), enter a room name and display name, and join. People who enter the same room name meet one another; different room names create independent meetings.
@@ -43,8 +55,10 @@ Open [https://mimosa-srtp.com](https://mimosa-srtp.com), enter a room name and d
 You can also prepare links in advance:
 
 ```text
-Chinese: https://mimosa-srtp.com/?room=community-weekly&name=Alex
-English: https://mimosa-srtp.com/?room=community-weekly&name=Alex&lang=en
+Mimosa, Chinese: https://mimosa-srtp.com/?condition=mimosa&room=community-weekly&name=Alex
+Mimosa, English: https://mimosa-srtp.com/?condition=mimosa&room=community-weekly&name=Alex&lang=en
+Simple reminder, Chinese: https://mimosa-srtp.com/?condition=baseline&room=community-weekly&name=Alex
+Simple reminder, English: https://mimosa-srtp.com/?condition=baseline&room=community-weekly&name=Alex&lang=en
 ```
 
 Use a unique room name for every simultaneous group. Room names should contain only simple letters, numbers, and hyphens, for example `team-a-2026-07-31`.
@@ -106,6 +120,19 @@ Enter the same room name on each device. Mimosa does not impose a four-person li
 ### Change language
 
 Use the language control in the interface or add `lang=en` to the URL. Without that parameter, Mimosa starts in Chinese.
+
+### Change condition
+
+Use `condition=mimosa` for the complete Mimosa interaction and `condition=baseline` for the simple reminder. Without a `condition` parameter, the application opens Mimosa.
+
+Participant and non-participating observer links for one baseline room are:
+
+```text
+Participant: https://mimosa-srtp.com/?condition=baseline&room=group-a&name=Participant-A
+Observer: https://mimosa-srtp.com/?condition=baseline&room=group-a&name=Researcher&research=1
+```
+
+Every member of one session, including its observer, must use the same `condition` and `room` values. Mimosa maps the condition to a separate underlying Jitsi room, so `group-a` in the baseline does not mix audio, video, or study messages with `group-a` in Mimosa. The observer is excluded from silence sensing and participant interaction, but can mark the session and collect the condition-labelled event logs.
 
 ### Move the plant
 
