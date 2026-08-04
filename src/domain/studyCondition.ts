@@ -10,5 +10,5 @@ export function conditionMeetingRoomName(
   roomName: string,
   condition: StudyCondition,
 ) {
-  return `${roomName}-${condition}`
+  return condition === 'baseline' ? `${roomName}-baseline` : roomName
 }

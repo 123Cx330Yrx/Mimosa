@@ -14,6 +14,6 @@ describe('study condition routing', () => {
 
   it('isolates the underlying meeting rooms by condition', () => {
     expect(conditionMeetingRoomName('group-a', 'baseline')).toBe('group-a-baseline')
-    expect(conditionMeetingRoomName('group-a', 'mimosa')).toBe('group-a-mimosa')
+    expect(conditionMeetingRoomName('group-a', 'mimosa')).toBe('group-a')
   })
 })
