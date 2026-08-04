@@ -125,6 +125,8 @@ Use the language control in the interface or add `lang=en` to the URL. Without t
 
 Use `condition=mimosa` for the complete Mimosa interaction and `condition=baseline` for the simple reminder. Without a `condition` parameter, the application opens Mimosa.
 
+The two conditions have separate top-level applications. `App.tsx` only selects `MimosaApp` or `BaselineApp`; baseline timers and reminder state are not mounted on the Mimosa route. Maintainers can run `npm run verify:mimosa` to confirm that the Mimosa implementation has not drifted from the last pre-baseline release, apart from the explicitly approved lower notification volume.
+
 Participant and non-participating observer links for one baseline room are:
 
 ```text
@@ -204,16 +206,19 @@ Review your JaaS configuration and privacy notice before using Mimosa in a publi
 
 ```text
 src/
+├── App.tsx                            condition-only route selector
+├── MimosaApp.tsx                     complete Mimosa meeting flow
+├── BaselineApp.tsx                   simple reminder condition
 ├── components/MimosaScene.tsx        ecological scene and animations
 ├── domain/mimosaMachine.ts           interaction state reducer
 ├── domain/protocol.ts                typed messages exchanged by clients
 ├── meeting/JaaSTransport.ts          Jitsi/JaaS iframe and data adapter
 ├── sensing/                           local speech-activity sensing
 ├── i18n.ts                            Chinese and English interface copy
-├── App.tsx                            meeting shell and orchestration
 └── App.css                            layout, visual system, and motion
 scripts/
-└── package_tencent_flat.py           optional flat ZIP packaging helper
+├── package_tencent_flat.py           optional flat ZIP packaging helper
+└── verify-mimosa-baseline.mjs        pre-baseline regression guard
 docs/                                  design and maintenance notes
 ```
 

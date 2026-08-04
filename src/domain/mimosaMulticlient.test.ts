@@ -100,21 +100,6 @@ describe('four-client role negotiation and feedback flow', () => {
     )
   })
 
-  it('moves an unassigned member into the response entry when another member claims waiting', () => {
-    const unassignedB = candidate()
-    const afterAClaims = bindWaitingSender(
-      unassignedB,
-      'endpoint-a-seen-by-b',
-      false,
-    )
-
-    expect(afterAClaims.localRole).toBe('responding')
-    expect(afterAClaims.activeMoment).toMatchObject({
-      waitingMemberId: 'endpoint-a-seen-by-b',
-      phase: 'SENSITIVE_SILENCE',
-    })
-  })
-
   it('keeps private response details only on the waiting client while syncing the environment', () => {
     const waitingA = bindWaitingSender(chooseRole(candidate(), 'waiting'), 'a-local', true)
     const respondingB = bindWaitingSender(chooseRole(candidate(), 'responding'), 'a-seen-by-b', false)

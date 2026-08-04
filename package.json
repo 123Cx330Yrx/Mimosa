@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "verify:mimosa": "node scripts/verify-mimosa-baseline.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

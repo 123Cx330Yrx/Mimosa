@@ -125,6 +125,8 @@ VITE_RESPONSE_COUNT_MODE=exact
 
 `condition=mimosa` 表示完整 Mimosa 互动版，`condition=baseline` 表示简单提醒版。网址不写 `condition` 时，默认进入 Mimosa。
 
+两种条件使用彼此独立的顶层应用。`App.tsx` 只负责选择 `MimosaApp` 或 `BaselineApp`，Baseline 的计时器和提醒状态不会挂载到 Mimosa 路由。维护者可运行 `npm run verify:mimosa`，确认 Mimosa 实现没有偏离加入 Baseline 前的最后版本；唯一明确批准的差异是降低提示音音量。
+
 同一个 baseline 房间的参与者链接与非参与式观察端链接示例：
 
 ```text
@@ -204,16 +206,19 @@ python scripts/package_tencent_flat.py
 
 ```text
 src/
+├── App.tsx                            只负责选择实验条件
+├── MimosaApp.tsx                     完整 Mimosa 会议流程
+├── BaselineApp.tsx                   简单提醒条件
 ├── components/MimosaScene.tsx        生态场景与动效
 ├── domain/mimosaMachine.ts           互动状态转换
 ├── domain/protocol.ts                客户端之间交换的类型化消息
 ├── meeting/JaaSTransport.ts          Jitsi/JaaS iframe 与数据适配层
 ├── sensing/                           本地语音活动感知
 ├── i18n.ts                            中英文界面文案
-├── App.tsx                            会议外壳与流程编排
 └── App.css                            布局、视觉系统与动画
 scripts/
-└── package_tencent_flat.py           可选的腾讯云扁平打包工具
+├── package_tencent_flat.py           可选的腾讯云扁平打包工具
+└── verify-mimosa-baseline.mjs        原版 Mimosa 回归守卫
 docs/                                  设计与维护说明
 ```
 
