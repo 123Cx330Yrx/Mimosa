@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conditionMeetingRoomName, conditionRoomId, parseStudyCondition } from './studyCondition'
+import { conditionMeetingRoomName, parseStudyCondition } from './studyCondition'
 
 describe('study condition routing', () => {
   it('uses Mimosa unless baseline is requested explicitly', () => {
@@ -10,11 +10,6 @@ describe('study condition routing', () => {
 
   it('recognizes the baseline condition', () => {
     expect(parseStudyCondition('?room=group-a&condition=baseline')).toBe('baseline')
-  })
-
-  it('isolates study messages while preserving the meeting room name', () => {
-    expect(conditionRoomId('app', 'group-a', 'baseline')).toBe('app/group-a#baseline')
-    expect(conditionRoomId('app', 'group-a', 'mimosa')).toBe('app/group-a#mimosa')
   })
 
   it('isolates the underlying meeting rooms by condition', () => {

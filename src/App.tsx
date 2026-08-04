@@ -35,7 +35,7 @@ import {
   type LogTransferChunk,
   type StudyLogBundle,
 } from './research/observerLogTransfer'
-import { conditionMeetingRoomName, conditionRoomId, parseStudyCondition } from './domain/studyCondition'
+import { conditionMeetingRoomName, parseStudyCondition } from './domain/studyCondition'
 
 const cueLabels: Record<ParticipantCue, { label: string; detail: string }> = {
   NEED_TIME: { label: '需要一点时间', detail: '我还在思考或组织语言' },
@@ -426,7 +426,7 @@ function App() {
   function baseFields(momentId: string) {
     const transport = transportRef.current
     return {
-      roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
+      roomId: `${appId.trim()}/${roomName.trim()}`,
       silentMomentId: momentId,
       senderId: transport?.getLocalParticipantId() ?? 'local',
     }
@@ -863,7 +863,6 @@ function App() {
   function handleMessage(message: MimosaEnvelope, senderId: string) {
     if (seenMessages.current.has(message.messageId)) return
     seenMessages.current.add(message.messageId)
-    if (message.roomId !== conditionRoomId(appId.trim(), roomName.trim(), condition)) return
     const current = stateRef.current
     const transport = transportRef.current
 
@@ -1348,7 +1347,7 @@ function App() {
         if (participant.id === localId) continue
         if (condition === 'mimosa' && current.deferredMoments.length > 0) {
           transport.sendTo(participant.id, createEnvelope({
-            roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
+            roomId: `${appId.trim()}/${roomName.trim()}`,
             silentMomentId: '',
             senderId: localId,
             type: 'DEFERRED_STATE_SNAPSHOT',
@@ -1356,7 +1355,7 @@ function App() {
           }))
         }
         const sendSnapshot = () => transport.sendTo(participant.id, createEnvelope({
-            roomId: conditionRoomId(appId.trim(), roomName.trim(), condition),
+            roomId: `${appId.trim()}/${roomName.trim()}`,
             silentMomentId: snapshot.id,
             senderId: localId,
             type: 'STATE_SNAPSHOT',

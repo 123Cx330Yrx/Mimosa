@@ -196,9 +196,7 @@ export function mimosaReducer(state: MimosaState, event: MimosaEvent): MimosaSta
           ? 'waiting'
           : state.localRole === 'dismissed'
             ? 'dismissed'
-            : state.localRole === 'waiting'
-              ? 'responding'
-              : state.localRole,
+            : 'responding',
         activeMoment: state.activeMoment
           ? {
               ...state.activeMoment,

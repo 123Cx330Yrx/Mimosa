@@ -6,14 +6,6 @@ export function parseStudyCondition(search: string): StudyCondition {
     : 'mimosa'
 }
 
-export function conditionRoomId(
-  appId: string,
-  roomName: string,
-  condition: StudyCondition,
-) {
-  return `${appId}/${roomName}#${condition}`
-}
-
 export function conditionMeetingRoomName(
   roomName: string,
   condition: StudyCondition,

@@ -44,7 +44,7 @@ export class RoleClaimNotification {
     source.buffer = buffer
     // Jitsi's source file is deliberately gentle. Raising it here makes the
     // cue noticeable from a background tab without reaching alarm-like levels.
-    gain.gain.setValueAtTime(1.35, context.currentTime)
+    gain.gain.setValueAtTime(1.15, context.currentTime)
     source.connect(gain)
     gain.connect(context.destination)
     source.start()
