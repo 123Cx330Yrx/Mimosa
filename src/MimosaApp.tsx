@@ -19,6 +19,7 @@ import {
 } from './domain/silenceCoordinator'
 import { JaaSTransport } from './meeting/JaaSTransport'
 import type { MeetingParticipant, MeetingTransport } from './meeting/MeetingTransport'
+import { deliverReliably } from './meeting/reliableDelivery'
 import type { SpeechSensorStatus } from './sensing/SpeechActivitySensor'
 import { WebAudioSpeechActivitySensor } from './sensing/WebAudioSpeechActivitySensor'
 import {
@@ -131,6 +132,8 @@ function MimosaApp() {
   const knownParticipantIds = useRef(new Set<string>())
   const confirmedWaitingMoments = useRef(new Set<string>())
   const notifiedWaitingMoments = useRef(new Set<string>())
+  const closedMomentIdsRef = useRef(new Set<string>())
+  const privateCueLedgerRef = useRef<Record<string, ParticipantCue>>({})
   const roleClaimNotification = useRef<RoleClaimNotification | null>(null)
   const pendingWaitingClaimId = useRef<string | null>(null)
   const endingTimer = useRef<number | null>(null)
@@ -262,6 +265,7 @@ function MimosaApp() {
     setSceneReaction(null)
     setRecoverySuggested(false)
     setObserverCueCounts({ NEED_TIME: 0, CHECKING: 0, SOCIAL_PRESSURE: 0 })
+    privateCueLedgerRef.current = {}
     pendingWaitingClaimId.current = null
   }, [state.activeMoment?.id])
   useEffect(() => () => {
@@ -290,6 +294,7 @@ function MimosaApp() {
       stateRef.current.activeMoment.phase !== 'ROLE_CONFIRMATION'
     ) return
     setCandidateExiting(true)
+    closedMomentIdsRef.current.add(momentId)
     candidateExitTimer.current = window.setTimeout(() => {
       candidateExitTimer.current = null
       dispatch({ type: 'MOMENT_CLEARED' })
@@ -326,7 +331,7 @@ function MimosaApp() {
       ) return
 
       dispatch({ type: 'PLANT_CLOSING_STARTED', momentId })
-      transport.broadcast(buildEnvelope({ ...baseFields(momentId), type: 'PLANT_CLOSING_STARTED', payload: {} }))
+      broadcastReliably(buildEnvelope({ ...baseFields(momentId), type: 'PLANT_CLOSING_STARTED', payload: {} }))
       recordEvent('plant_closing_started', momentId, { afterMs: PLANT_CLOSE_START_DELAY_MS, mode: 'after-growth' })
       noResponseTimer.current = null
     }, PLANT_CLOSE_START_DELAY_MS)
@@ -381,17 +386,17 @@ function MimosaApp() {
   function broadcastReliably(message: MimosaEnvelope) {
     const transport = transportRef.current
     if (!transport) return
-    transport.broadcast(message)
-    window.setTimeout(() => transportRef.current?.broadcast(message), 450)
-    window.setTimeout(() => transportRef.current?.broadcast(message), 1_250)
+    deliverReliably(() => {
+      if (transportRef.current === transport) transport.broadcast(message)
+    })
   }
 
   function sendReliably(participantId: string, message: MimosaEnvelope) {
     const transport = transportRef.current
     if (!transport) return
-    transport.sendTo(participantId, message)
-    window.setTimeout(() => transportRef.current?.sendTo(participantId, message), 450)
-    window.setTimeout(() => transportRef.current?.sendTo(participantId, message), 1_250)
+    deliverReliably(() => {
+      if (transportRef.current === transport) transport.sendTo(participantId, message)
+    })
   }
 
   function setKnownObserver(participantId: string) {
@@ -497,7 +502,7 @@ function MimosaApp() {
     if (isObserver || !transportRef.current) return
     const chunks = createLogTransferChunks(requestId, studyIdentity, studyEvents)
     for (const chunk of chunks) {
-      transportRef.current.sendTo(requesterId, buildEnvelope({
+      sendReliably(requesterId, buildEnvelope({
         ...baseFields(stateRef.current.activeMoment?.id ?? ''),
         type: 'STUDY_LOG_RESPONSE_CHUNK',
         payload: chunk,
@@ -831,6 +836,7 @@ function MimosaApp() {
           observerIdsRef.current.has(senderId) &&
           current.activeMoment?.id === message.silentMomentId
         ) {
+          closedMomentIdsRef.current.add(message.silentMomentId)
           clearCandidateTimer()
           clearNoResponseTimer()
           clearRecoveryTimer()
@@ -997,16 +1003,20 @@ function MimosaApp() {
         const effect = getCueEffect(message.payload.cue, message.payload.environment)
         setSceneReaction({ id: message.messageId, environment: effect.environment })
         dispatch({ type: 'PRIVATE_CUE_RECEIVED', momentId: message.silentMomentId, senderId, cue: message.payload.cue, environment: message.payload.environment })
-        const updatedCues = { ...current.privateCues, [senderId]: message.payload.cue }
+        const updatedCues = {
+          ...privateCueLedgerRef.current,
+          [senderId]: message.payload.cue,
+        }
+        privateCueLedgerRef.current = updatedCues
         const cueCounts = countParticipantCues(updatedCues)
         sendObserverRoundSummary(message.silentMomentId, cueCounts)
         recordEvent('private_cue_received', message.silentMomentId, { cue: message.payload.cue, environment: effect.environment })
-        transport?.sendTo(senderId, buildEnvelope({
+        sendReliably(senderId, buildEnvelope({
           ...baseFields(message.silentMomentId),
           type: 'PARTICIPANT_CUE_ACK',
           payload: { cue: message.payload.cue },
         }))
-        transport?.broadcast(buildEnvelope({
+        broadcastReliably(buildEnvelope({
           ...baseFields(message.silentMomentId),
           type: 'ENVIRONMENT_STATE',
           payload: { environment: effect.environment, publicCue: effect.feedback },
@@ -1027,6 +1037,7 @@ function MimosaApp() {
         recordEvent('environment_received', message.silentMomentId, { environment: message.payload.environment })
         break
       case 'CARE_ACTION':
+        if (current.activeMoment?.id !== message.silentMomentId) break
         clearNoResponseTimer()
         dispatch({ type: 'CARE_ACTION_APPLIED', momentId: message.silentMomentId, action: message.payload.action })
         setLastCareAction(message.payload.action)
@@ -1037,6 +1048,8 @@ function MimosaApp() {
         recordEvent('plant_closing_received', message.silentMomentId)
         break
       case 'MOMENT_ENDED':
+        closedMomentIdsRef.current.add(message.silentMomentId)
+        if (current.activeMoment?.id !== message.silentMomentId) break
         clearRecoveryTimer()
         setRecoverySuggested(false)
         showRoundNotice(message.payload.outcome, message.payload.question)
@@ -1057,11 +1070,11 @@ function MimosaApp() {
         if (!canShare) return
         const snapshot = toPublicSnapshot(current)
         if (!snapshot) return
-        transport?.sendTo(senderId, buildEnvelope({ ...baseFields(snapshot.id), type: 'STATE_SNAPSHOT', payload: snapshot }))
+        sendReliably(senderId, buildEnvelope({ ...baseFields(snapshot.id), type: 'STATE_SNAPSHOT', payload: snapshot }))
         break
       }
       case 'STATE_SNAPSHOT':
-        if (!current.activeMoment) {
+        if (!current.activeMoment && !closedMomentIdsRef.current.has(message.payload.id)) {
           const snapshot = bindSnapshotToSender(message.payload, senderId)
           if (snapshot.phase !== 'ROLE_CONFIRMATION') formalMomentStartedAt.current = Date.now()
           dispatch({
@@ -1104,7 +1117,7 @@ function MimosaApp() {
         break
       case 'DEFERRED_STATE_REQUEST': {
         if (current.deferredMoments.length === 0) return
-        transport?.sendTo(senderId, buildEnvelope({
+        sendReliably(senderId, buildEnvelope({
           ...baseFields(''),
           type: 'DEFERRED_STATE_SNAPSHOT',
           payload: { moments: current.deferredMoments },
@@ -1118,6 +1131,28 @@ function MimosaApp() {
           if (!merged.some((existing) => existing.id === moment.id)) merged.push(moment)
         }
         dispatch({ type: 'DEFERRED_MOMENTS_RESTORED', moments: merged })
+        const activeDeferred = merged.find(
+          (moment) => moment.id === current.activeMoment?.id,
+        )
+        if (
+          activeDeferred &&
+          current.activeMoment &&
+          !closedMomentIdsRef.current.has(activeDeferred.id)
+        ) {
+          closedMomentIdsRef.current.add(activeDeferred.id)
+          clearNoResponseTimer()
+          clearRecoveryTimer()
+          setRecoverySuggested(false)
+          dispatch({
+            type: 'MOMENT_ENDED',
+            momentId: activeDeferred.id,
+            question: activeDeferred.question,
+            waitingMemberId: activeDeferred.ownerId,
+            outcome: 'DEFERRED',
+          })
+          showRoundNotice('DEFERRED', activeDeferred.question)
+          recordEvent('deferred_end_reconciled', activeDeferred.id)
+        }
         recordEvent('deferred_state_restored', undefined, { count: merged.length })
         break
       }
@@ -1271,7 +1306,7 @@ function MimosaApp() {
       for (const participant of added) {
         if (participant.id === localId) continue
         if (current.deferredMoments.length > 0) {
-          transport.sendTo(participant.id, createEnvelope({
+          sendReliably(participant.id, createEnvelope({
             roomId: `${appId.trim()}/${roomName.trim()}`,
             silentMomentId: '',
             senderId: localId,
@@ -1279,16 +1314,13 @@ function MimosaApp() {
             payload: { moments: current.deferredMoments },
           }))
         }
-        const sendSnapshot = () => transport.sendTo(participant.id, createEnvelope({
-            roomId: `${appId.trim()}/${roomName.trim()}`,
-            silentMomentId: snapshot.id,
-            senderId: localId,
-            type: 'STATE_SNAPSHOT',
-            payload: snapshot,
-          }))
-        sendSnapshot()
-        window.setTimeout(sendSnapshot, 900)
-        window.setTimeout(sendSnapshot, 2_200)
+        sendReliably(participant.id, createEnvelope({
+          roomId: `${appId.trim()}/${roomName.trim()}`,
+          silentMomentId: snapshot.id,
+          senderId: localId,
+          type: 'STATE_SNAPSHOT',
+          payload: snapshot,
+        }))
       }
     })
     transportRef.current = transport
@@ -1349,12 +1381,16 @@ function MimosaApp() {
     }
   }
 
-  function removeDeferredMoment(momentId: string) {
+  function rememberDeferredRemoval(momentId: string) {
     removedDeferredMomentIdsRef.current.add(momentId)
     localStorage.setItem(
       `mimosa:deferred-removed:${appId}:${roomName}`,
       JSON.stringify([...removedDeferredMomentIdsRef.current]),
     )
+  }
+
+  function removeDeferredMoment(momentId: string) {
+    rememberDeferredRemoval(momentId)
     dispatch({ type: 'DEFERRED_MOMENT_REMOVED', momentId })
     setPendingDeferredRemovalId(null)
     setDeferredDrafts((drafts) => {
@@ -1397,13 +1433,19 @@ function MimosaApp() {
       resumedFrom,
     })
     if (resumedFrom) {
+      rememberDeferredRemoval(resumedFrom)
+      broadcastReliably(buildEnvelope({
+        ...baseFields(resumedFrom),
+        type: 'DEFERRED_MOMENT_REMOVED',
+        payload: { momentId: resumedFrom },
+      }))
       setDeferredDrafts((drafts) => {
         const nextDrafts = { ...drafts }
         delete nextDrafts[resumedFrom]
         return nextDrafts
       })
     }
-    transport.broadcast(buildEnvelope({
+    broadcastReliably(buildEnvelope({
       ...baseFields(id),
       type: 'SILENT_MOMENT_CREATED',
       payload: {
@@ -1436,7 +1478,7 @@ function MimosaApp() {
       question: proposedQuestion || undefined,
       candidateExpiresAt: expiresAt,
     })
-    transport.broadcast(buildEnvelope({
+    broadcastReliably(buildEnvelope({
       ...baseFields(id),
       type: 'SILENCE_CANDIDATE_CREATED',
       payload: {
@@ -1541,7 +1583,7 @@ function MimosaApp() {
     const transport = transportRef.current
     const moment = state.activeMoment
     if (!transport || !moment || !moment.waitingMemberId || state.localRole !== 'responding' || sentCue) return
-    transport.sendTo(moment.waitingMemberId, buildEnvelope({ ...baseFields(moment.id), type: 'PARTICIPANT_CUE', payload: { cue, environment } }))
+    sendReliably(moment.waitingMemberId, buildEnvelope({ ...baseFields(moment.id), type: 'PARTICIPANT_CUE', payload: { cue, environment } }))
     setSentCue(cue)
     setCueAcknowledged(false)
     setPendingCue(null)
@@ -1593,7 +1635,7 @@ function MimosaApp() {
     setRecoverySuggested(false)
     clearRecoveryTimer()
     dispatch({ type: 'CARE_ACTION_APPLIED', momentId: moment.id, action })
-    transport.broadcast(buildEnvelope({ ...baseFields(moment.id), type: 'CARE_ACTION', payload: { action, plant: effect.plant, feedback: effect.feedback } }))
+    broadcastReliably(buildEnvelope({ ...baseFields(moment.id), type: 'CARE_ACTION', payload: { action, plant: effect.plant, feedback: effect.feedback } }))
     recordEvent('care_action_sent', moment.id, { action })
     if (action === 'DEFER' || action === 'RESOLVE') {
       setEnding(true)
@@ -1620,7 +1662,27 @@ function MimosaApp() {
         question: moment.question,
       },
     })
-    transport.broadcast(message)
+    closedMomentIdsRef.current.add(moment.id)
+    broadcastReliably(message)
+    if (outcome === 'DEFERRED') {
+      const deferredMoments = stateRef.current.deferredMoments.some(
+        (deferred) => deferred.id === moment.id,
+      )
+        ? stateRef.current.deferredMoments
+        : [
+            ...stateRef.current.deferredMoments,
+            {
+              id: moment.id,
+              question: moment.question,
+              ownerId: moment.waitingMemberId,
+            },
+          ]
+      broadcastReliably(buildEnvelope({
+        ...baseFields(''),
+        type: 'DEFERRED_STATE_SNAPSHOT',
+        payload: { moments: deferredMoments },
+      }))
+    }
     showRoundNotice(outcome, moment.question)
     dispatch({
       type: 'MOMENT_ENDED',

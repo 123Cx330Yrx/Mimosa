@@ -46,6 +46,13 @@ function unwrapEndpointMessage(event: unknown) {
   return { text, senderId }
 }
 
+export function upsertParticipantByEndpoint(
+  participants: Map<string, MeetingParticipant>,
+  participant: MeetingParticipant,
+) {
+  participants.set(participant.id, participant)
+}
+
 async function loadExternalApi(appId: string) {
   if (window.JitsiMeetExternalAPI) return
   const source = `https://8x8.vc/${encodeURIComponent(appId)}/external_api.js`
@@ -269,12 +276,7 @@ export class JaaSTransport implements MeetingTransport {
   }
 
   private upsertParticipant(participant: MeetingParticipant) {
-    for (const [id, existing] of this.participants) {
-      if (id !== participant.id && existing.displayName === participant.displayName) {
-        this.participants.delete(id)
-      }
-    }
-    this.participants.set(participant.id, participant)
+    upsertParticipantByEndpoint(this.participants, participant)
   }
 
   private emitParticipants() {

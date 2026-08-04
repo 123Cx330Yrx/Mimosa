@@ -277,7 +277,12 @@ export function mimosaReducer(state: MimosaState, event: MimosaEvent): MimosaSta
     case 'DEFERRED_MOMENTS_RESTORED':
       return {
         ...state,
-        deferredMoments: event.moments,
+        deferredMoments: event.moments.reduce(
+          (moments, moment) => moments.some((existing) => existing.id === moment.id)
+            ? moments
+            : [...moments, moment],
+          state.deferredMoments,
+        ),
       }
     case 'DEFERRED_MOMENT_REMOVED':
       return {
