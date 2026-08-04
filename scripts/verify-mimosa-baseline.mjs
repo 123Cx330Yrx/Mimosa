@@ -2,9 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-const referenceCommit = '16f81f0'
+const referenceCommit = '3761abb'
 
 const unchangedMimosaDependencies = [
+  'src/App.tsx',
+  'src/audio/RoleClaimNotification.ts',
   'src/components/MimosaScene.tsx',
   'src/domain/environmentScene.ts',
   'src/domain/mimosaMachine.ts',
@@ -13,6 +15,7 @@ const unchangedMimosaDependencies = [
   'src/i18n.ts',
   'src/meeting/JaaSTransport.ts',
   'src/meeting/MeetingTransport.ts',
+  'src/meeting/reliableDelivery.ts',
   'src/research/observerLogTransfer.ts',
   'src/research/studyLog.ts',
   'src/sensing/SpeechActivitySensor.ts',
@@ -32,7 +35,7 @@ function sha256(source) {
 }
 
 const reference = normalize(
-  execFileSync('git', ['show', `${referenceCommit}:src/App.tsx`], {
+  execFileSync('git', ['show', `${referenceCommit}:src/MimosaApp.tsx`], {
     encoding: 'utf8',
   }),
 )
@@ -47,7 +50,7 @@ if (current !== reference) {
 }
 
 console.log(
-  `MimosaApp matches ${referenceCommit} after component-name normalization ` +
+  `MimosaApp matches the audited reference ${referenceCommit} ` +
   `(${sha256(current)}).`,
 )
 
@@ -68,17 +71,3 @@ for (const file of unchangedMimosaDependencies) {
 console.log(
   `${unchangedMimosaDependencies.length} Mimosa dependencies also match ${referenceCommit}.`,
 )
-
-const referenceAudio = normalize(execFileSync(
-  'git',
-  ['show', `${referenceCommit}:src/audio/RoleClaimNotification.ts`],
-  { encoding: 'utf8' },
-)).replace('setValueAtTime(1.35', 'setValueAtTime(1.15')
-const currentAudio = normalize(readFileSync('src/audio/RoleClaimNotification.ts', 'utf8'))
-
-if (currentAudio !== referenceAudio) {
-  console.error('The Mimosa notification differs from the approved 1.15-gain variant.')
-  process.exit(1)
-}
-
-console.log('Mimosa notification matches the approved 1.15-gain variant.')

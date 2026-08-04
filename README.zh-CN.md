@@ -125,7 +125,9 @@ VITE_RESPONSE_COUNT_MODE=exact
 
 `condition=mimosa` 表示完整 Mimosa 互动版，`condition=baseline` 表示简单提醒版。网址不写 `condition` 时，默认进入 Mimosa。
 
-两种条件使用彼此独立的顶层应用。`App.tsx` 只负责选择 `MimosaApp` 或 `BaselineApp`，Baseline 的计时器和提醒状态不会挂载到 Mimosa 路由。维护者可运行 `npm run verify:mimosa`，确认 Mimosa 实现没有偏离加入 Baseline 前的最后版本；唯一明确批准的差异是降低提示音音量。
+两种条件使用彼此独立的顶层应用。`App.tsx` 只负责选择 `MimosaApp` 或 `BaselineApp`，Baseline 的计时器和提醒状态不会挂载到 Mimosa 路由。维护者可运行 `npm run verify:mimosa`，把 Mimosa 路由及其依赖与经过审计的多人稳定版本进行比较。
+
+自动检测到沉默后，所有成员先收到私密的三选一角色提示。一名成员认领“正在等待回应”后，其他尚未选择的成员会进入新的二选一界面：“我可能会回应 / 暂时不需要”。只有选择“我可能会回应”后才进入匿名环境回应；认领完成后不再允许其他成员选择等待者角色。
 
 同一个 baseline 房间的参与者链接与非参与式观察端链接示例：
 

@@ -125,7 +125,9 @@ Use the language control in the interface or add `lang=en` to the URL. Without t
 
 Use `condition=mimosa` for the complete Mimosa interaction and `condition=baseline` for the simple reminder. Without a `condition` parameter, the application opens Mimosa.
 
-The two conditions have separate top-level applications. `App.tsx` only selects `MimosaApp` or `BaselineApp`; baseline timers and reminder state are not mounted on the Mimosa route. Maintainers can run `npm run verify:mimosa` to confirm that the Mimosa implementation has not drifted from the last pre-baseline release, apart from the explicitly approved lower notification volume.
+The two conditions have separate top-level applications. `App.tsx` only selects `MimosaApp` or `BaselineApp`; baseline timers and reminder state are not mounted on the Mimosa route. Maintainers can run `npm run verify:mimosa` to compare the Mimosa route and its dependencies with the audited multi-client reference.
+
+In an automatically detected quiet moment, everyone first receives a private three-option role prompt. After one member claims that they are waiting for a response, unassigned members receive a new two-option follow-up: **I may respond** or **Not right now**. Only the first option opens the anonymous environmental response controls. The waiting-role option is no longer available after the claim.
 
 Participant and non-participating observer links for one baseline room are:
 
