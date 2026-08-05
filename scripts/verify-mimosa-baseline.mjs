@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-const referenceCommit = '3761abb'
+const referenceCommit = '24b26dc'
 
 const unchangedMimosaDependencies = [
   'src/App.tsx',
