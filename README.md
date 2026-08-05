@@ -16,7 +16,7 @@ The application embeds a Jitsi/JaaS meeting and adds a shared ecological scene. 
 - A complete browser meeting experience powered by Jitsi as a Service (JaaS).
 - Chinese and English interfaces that can be changed before or during a call.
 - Manual open-question marking and optional local silence sensing.
-- Jitsi's familiar silence-reaction cricket cue when somebody claims the waiting role, paired with the visual prompt for members whose attention is outside the meeting window.
+- Jitsi's familiar silence-reaction cricket cue when the automatic quiet-moment prompt appears, and when somebody claims the waiting role or manually marks an open question.
 - Private, low-effort responses with anonymous shared feedback.
 - A living mimosa scene with growth, leaf movement, sunlight, watering, clouds, seed storage, and restoration animations.
 - Editable deferred questions that can be brought back into the conversation.
@@ -193,6 +193,12 @@ Before using this helper on another computer, edit its `OUTPUT` constant to a va
 ### GitHub Pages
 
 The current Vite configuration assumes deployment at a domain root. If you publish at `https://username.github.io/Mimosa/`, set Vite's `base` option to `/Mimosa/` before building. A custom domain served at its root does not need that change.
+
+## Study logs
+
+Each participant browser stores structured events with ISO timestamps, a pseudonymous participant ID, and a `momentId`. Events cover prompt exposure, selection and non-response; role claims; private cues; care actions; deferral, edited reopening and removal; participant-count changes; and the final state at export. Logs contain no question text, audio, transcript, or real name.
+
+When the observer requests logs, every participant sends their latest events through the meeting data channel. The aggregate export includes the condition, room, log-schema version, protocol version, study settings, and `expectedParticipants`, `receivedParticipants`, and `complete` collection fields. Confirm that `complete` is `true` before analysis, then pair and deduplicate events by pseudonymous participant and `momentId`.
 
 ## Privacy model
 

@@ -1,12 +1,8 @@
-import type { StudyEvent, StudyIdentity } from './studyLog'
+import type { StudyLogBundle } from './studyLog'
+
+export type { StudyLogBundle } from './studyLog'
 
 export const LOG_TRANSFER_CHUNK_SIZE = 5_500
-
-export interface StudyLogBundle {
-  identity: StudyIdentity
-  generatedAt: string
-  events: readonly StudyEvent[]
-}
 
 export interface LogTransferChunk {
   requestId: string
@@ -20,24 +16,18 @@ export interface LogTransferChunk {
 
 export function createLogTransferChunks(
   requestId: string,
-  identity: StudyIdentity,
-  events: readonly StudyEvent[],
-  generatedAt = new Date().toISOString(),
+  bundle: StudyLogBundle,
 ): LogTransferChunk[] {
-  const serialized = JSON.stringify({
-    identity,
-    generatedAt,
-    events,
-  } satisfies StudyLogBundle)
+  const serialized = JSON.stringify(bundle)
   const parts = serialized.match(new RegExp(`.{1,${LOG_TRANSFER_CHUNK_SIZE}}`, 'gs')) ?? ['']
   return parts.map((data, chunkIndex) => ({
     requestId,
-    participantPseudonym: identity.participantPseudonym,
-    sessionId: identity.sessionId,
+    participantPseudonym: bundle.identity.participantPseudonym,
+    sessionId: bundle.identity.sessionId,
     chunkIndex,
     chunkCount: parts.length,
     data,
-    generatedAt,
+    generatedAt: bundle.generatedAt,
   }))
 }
 
@@ -63,6 +53,8 @@ export function assembleLogTransferChunks(chunks: readonly LogTransferChunk[]) {
     if (
       !parsed.identity?.sessionId ||
       !parsed.identity.participantPseudonym ||
+      !parsed.study ||
+      !parsed.snapshot ||
       !Array.isArray(parsed.events) ||
       typeof parsed.generatedAt !== 'string'
     ) return null

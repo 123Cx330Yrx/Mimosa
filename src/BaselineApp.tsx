@@ -24,9 +24,11 @@ import type { SpeechSensorStatus } from './sensing/SpeechActivitySensor'
 import { WebAudioSpeechActivitySensor } from './sensing/WebAudioSpeechActivitySensor'
 import {
   clearStudyEvents,
+  createStudyLogBundle,
   getOrCreateStudyIdentity,
   persistStudyEvents,
   readStudyEvents,
+  STUDY_LOG_SCHEMA_VERSION,
   type StudyEvent,
 } from './research/studyLog'
 import {
@@ -194,10 +196,12 @@ function BaselineApp() {
   const [seedTransfer, setSeedTransfer] = useState<SeedTransfer | null>(null)
   const [studyEvents, setStudyEvents] = useState<StudyEvent[]>(() =>
     readStudyEvents(localStorage, studyIdentity.sessionId))
+  const studyEventsRef = useRef(studyEvents)
   const [deferredDrafts, setDeferredDrafts] = useState<Record<string, string>>({})
   const [pendingDeferredRemovalId, setPendingDeferredRemovalId] = useState<string | null>(null)
   const [silenceDetectionEnabled] = useState(true)
   const [sensorStatus, setSensorStatus] = useState<SpeechSensorStatus>('idle')
+  const sensorStatusRef = useRef<SpeechSensorStatus>('idle')
   const [, setSensorMessage] = useState('')
   const [localSpeechState, setLocalSpeechState] = useState<'waiting' | 'speaking' | 'quiet'>('waiting')
   const [localAudioMuted, setLocalAudioMuted] = useState(true)
@@ -210,8 +214,11 @@ function BaselineApp() {
   const baselineNoticeRef = useRef<{ id: string; leaving: boolean } | null>(null)
   const [baselineNoticeCount, setBaselineNoticeCount] = useState(0)
   const [deferredStorageReady, setDeferredStorageReady] = useState(false)
+  const connectionRef = useRef(connection)
 
   useEffect(() => { stateRef.current = state }, [state])
+  useEffect(() => { connectionRef.current = connection }, [connection])
+  useEffect(() => { sensorStatusRef.current = sensorStatus }, [sensorStatus])
   useEffect(() => { baselineNoticeRef.current = baselineNotice }, [baselineNotice])
   useEffect(() => () => roleClaimNotification.current?.dispose(), [])
   useEffect(() => {
@@ -402,9 +409,10 @@ function BaselineApp() {
   }
 
   function recordEvent(type: string, momentId?: string, details?: Record<string, unknown>) {
-    setStudyEvents((events) => [
-      ...events,
-      {
+    setStudyEvents((events) => {
+      const nextEvents = [
+        ...events,
+        {
         sequence: events.length + 1,
         at: new Date().toISOString(),
         type,
@@ -415,8 +423,42 @@ function BaselineApp() {
           participantCount: participantsRef.current.length,
           localRole: stateRef.current.localRole,
         },
+        },
+      ]
+      studyEventsRef.current = nextEvents
+      return nextEvents
+    })
+  }
+
+  function createCurrentStudyLogBundle() {
+    const current = stateRef.current
+    return createStudyLogBundle(
+      studyIdentity,
+      {
+        schemaVersion: STUDY_LOG_SCHEMA_VERSION,
+        condition,
+        roomName,
+        protocolVersion: MIMOSA_PROTOCOL_VERSION,
+        settings: {
+          roomSilenceThresholdMs: ROOM_SILENCE_THRESHOLD_MS,
+          roleConfirmationWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
+          baselineNoticeDurationMs: BASELINE_NOTICE_DURATION_MS,
+          responseCountMode: RESPONSE_COUNT_MODE,
+          sensingMode: silenceDetectionEnabled ? 'local-vad' : 'manual-fallback',
+        },
       },
-    ])
+      {
+        activeMomentId: baselineNoticeRef.current?.id,
+        activeMomentPhase: baselineNoticeRef.current ? 'BASELINE_NOTICE' : undefined,
+        localRole: current.localRole,
+        deferredMomentIds: [],
+        deferredQuestionCount: 0,
+        participantCount: participantsRef.current.length,
+        sensorStatus: sensorStatusRef.current,
+        connection: connectionRef.current,
+      },
+      studyEventsRef.current,
+    )
   }
 
   function buildEnvelope<T extends MimosaEnvelope>(message: Omit<T, 'app' | 'version' | 'messageId' | 'sentAt'>) {
@@ -549,7 +591,7 @@ function BaselineApp() {
 
   function respondToLogRequest(requestId: string, requesterId: string) {
     if (isObserver || !transportRef.current) return
-    const chunks = createLogTransferChunks(requestId, studyIdentity, studyEvents)
+    const chunks = createLogTransferChunks(requestId, createCurrentStudyLogBundle())
     for (const chunk of chunks) {
       transportRef.current.sendTo(requesterId, buildEnvelope({
         ...baseFields(stateRef.current.activeMoment?.id ?? ''),
@@ -577,12 +619,19 @@ function BaselineApp() {
 
   function downloadAggregatedLogs() {
     if (!isObserver || Object.keys(observerLogs).length === 0) return
+    const receivedParticipants = Object.keys(observerLogs).length
     const payload = {
       exportedAt: new Date().toISOString(),
+      schemaVersion: STUDY_LOG_SCHEMA_VERSION,
       roomId: `${appId}/${roomName}`,
       condition,
+      protocolVersion: MIMOSA_PROTOCOL_VERSION,
       requestId: observerLogRequestId,
-      participantCount: studyParticipants.length,
+      collection: {
+        expectedParticipants: studyParticipants.length,
+        receivedParticipants,
+        complete: receivedParticipants === studyParticipants.length,
+      },
       logs: Object.values(observerLogs),
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -594,7 +643,7 @@ function BaselineApp() {
     URL.revokeObjectURL(url)
     recordEvent('researcher_downloaded_aggregated_logs', stateRef.current.activeMoment?.id, {
       requestId: observerLogRequestId,
-      receivedParticipants: Object.keys(observerLogs).length,
+      receivedParticipants,
     })
   }
 
@@ -1270,9 +1319,12 @@ function BaselineApp() {
     })
     knownParticipantIds.current.clear()
     transport.onParticipantsChanged((nextParticipants) => {
-      const added = nextParticipants.filter((participant) => !knownParticipantIds.current.has(participant.id))
-      knownParticipantIds.current = new Set(nextParticipants.map((participant) => participant.id))
-      const presentIds = new Set(nextParticipants.map((participant) => participant.id))
+      const previousIds = knownParticipantIds.current
+      const added = nextParticipants.filter((participant) => !previousIds.has(participant.id))
+      const nextIds = new Set(nextParticipants.map((participant) => participant.id))
+      const removedCount = [...previousIds].filter((participantId) => !nextIds.has(participantId)).length
+      knownParticipantIds.current = nextIds
+      const presentIds = nextIds
       observerIdsRef.current = new Set(
         [...observerIdsRef.current].filter((participantId) => presentIds.has(participantId)),
       )
@@ -1287,6 +1339,13 @@ function BaselineApp() {
       participantClientKeys.current = new Map(
         [...participantClientKeys.current].filter(([endpointId]) => presentIds.has(endpointId)),
       )
+      if (added.length > 0 || removedCount > 0) {
+        recordEvent('participant_roster_changed', stateRef.current.activeMoment?.id, {
+          joinedCount: added.length,
+          leftCount: removedCount,
+          studyParticipantCount: nextStudyParticipants.length,
+        })
+      }
 
       const localId = transport.getLocalParticipantId()
       if (isObserver) {
@@ -1746,33 +1805,18 @@ function BaselineApp() {
   }
 
   function downloadStudyLog() {
-    const payload = JSON.stringify({
-      exportedAt: new Date().toISOString(),
-      study: {
-        ...studyIdentity,
-        roomName,
-        condition,
-        protocolVersion: MIMOSA_PROTOCOL_VERSION,
-        settings: {
-          roomSilenceThresholdMs: ROOM_SILENCE_THRESHOLD_MS,
-          roleConfirmationWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
-          plantCloseStartMs: PLANT_CLOSE_START_DELAY_MS,
-          responseCountMode: RESPONSE_COUNT_MODE,
-          sensingMode: silenceDetectionEnabled ? 'local-vad' : 'manual-fallback',
-        },
-      },
-      events: studyEvents,
-    }, null, 2)
+    const payload = JSON.stringify(createCurrentStudyLogBundle(), null, 2)
     const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `mimosa-${roomName}.json`
+    anchor.download = `${condition}-${roomName}.json`
     anchor.click()
     URL.revokeObjectURL(url)
   }
 
   function clearStudyLog() {
     clearStudyEvents(localStorage, studyIdentity.sessionId)
+    studyEventsRef.current = []
     setStudyEvents([])
   }
 

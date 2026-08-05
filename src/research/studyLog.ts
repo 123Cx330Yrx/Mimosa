@@ -1,3 +1,7 @@
+import type { StudyCondition } from '../domain/studyCondition'
+
+export const STUDY_LOG_SCHEMA_VERSION = 2 as const
+
 export interface StudyIdentity {
   sessionId: string
   participantPseudonym: string
@@ -9,6 +13,33 @@ export interface StudyEvent {
   type: string
   momentId?: string
   details?: Record<string, unknown>
+}
+
+export interface StudyLogMetadata {
+  schemaVersion: typeof STUDY_LOG_SCHEMA_VERSION
+  condition: StudyCondition
+  roomName: string
+  protocolVersion: number
+  settings: Record<string, string | number | boolean | null>
+}
+
+export interface StudyExportSnapshot {
+  activeMomentId?: string
+  activeMomentPhase?: string
+  localRole: string
+  deferredMomentIds: string[]
+  deferredQuestionCount: number
+  participantCount: number
+  sensorStatus: string
+  connection: string
+}
+
+export interface StudyLogBundle {
+  identity: StudyIdentity
+  generatedAt: string
+  study: StudyLogMetadata
+  snapshot: StudyExportSnapshot
+  events: readonly StudyEvent[]
 }
 
 const IDENTITY_KEY = 'mimosa:study-identity'
@@ -66,6 +97,33 @@ export function clearStudyEvents(storage: Storage, sessionId: string) {
     storage.removeItem(studyEventStorageKey(sessionId))
   } catch {
     // Ignore unavailable storage.
+  }
+}
+
+export function createStudyLogBundle(
+  identity: StudyIdentity,
+  study: StudyLogMetadata,
+  snapshot: StudyExportSnapshot,
+  events: readonly StudyEvent[],
+  generatedAt = new Date().toISOString(),
+): StudyLogBundle {
+  const nextSequence = events.reduce(
+    (highest, event) => Math.max(highest, event.sequence),
+    0,
+  ) + 1
+  const snapshotEvent: StudyEvent = {
+    sequence: nextSequence,
+    at: generatedAt,
+    type: 'export_snapshot',
+    momentId: snapshot.activeMomentId,
+    details: { ...snapshot },
+  }
+  return {
+    identity,
+    generatedAt,
+    study,
+    snapshot,
+    events: [...events, snapshotEvent],
   }
 }
 

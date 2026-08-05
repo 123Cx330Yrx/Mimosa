@@ -6,7 +6,7 @@ import { getEnvironmentSceneCopy } from './domain/environmentScene'
 import { translate, type Locale } from './i18n'
 import { createInitialState, getCareEffect, getCueEffect, mimosaReducer, toPublicSnapshot } from './domain/mimosaMachine'
 import { countParticipantCues, getStudyParticipants } from './domain/participantRoles'
-import { bindSnapshotToSender, createEnvelope, type CareAction, type EnvironmentState, type ExperimentMarker, type MimosaEnvelope, type MomentRole, type ParticipantCue, type SilentMomentOutcome } from './domain/protocol'
+import { bindSnapshotToSender, createEnvelope, MIMOSA_PROTOCOL_VERSION, type CareAction, type EnvironmentState, type ExperimentMarker, type MimosaEnvelope, type MomentRole, type ParticipantCue, type SilentMomentOutcome } from './domain/protocol'
 import {
   electCoordinatorCandidate,
   isRoomSpeaking,
@@ -24,9 +24,11 @@ import type { SpeechSensorStatus } from './sensing/SpeechActivitySensor'
 import { WebAudioSpeechActivitySensor } from './sensing/WebAudioSpeechActivitySensor'
 import {
   clearStudyEvents,
+  createStudyLogBundle,
   getOrCreateStudyIdentity,
   persistStudyEvents,
   readStudyEvents,
+  STUDY_LOG_SCHEMA_VERSION,
   type StudyEvent,
 } from './research/studyLog'
 import {
@@ -98,6 +100,8 @@ interface SeedTransfer {
   style?: CSSProperties
 }
 
+type PromptStage = 'role_confirmation' | 'role_followup' | 'participant_cue' | 'care_action'
+
 // The plant starts folding as soon as its growth entrance has settled. The
 // folding motion itself is deliberately slow, so there is no separate period
 // in which a fully-grown plant appears frozen.
@@ -131,7 +135,11 @@ function MimosaApp() {
   const seenMessages = useRef(new Set<string>())
   const knownParticipantIds = useRef(new Set<string>())
   const confirmedWaitingMoments = useRef(new Set<string>())
+  const notifiedCandidateMoments = useRef(new Set<string>())
   const notifiedWaitingMoments = useRef(new Set<string>())
+  const shownPromptKeys = useRef(new Set<string>())
+  const selectedPromptKeys = useRef(new Set<string>())
+  const ignoredPromptKeys = useRef(new Set<string>())
   const closedMomentIdsRef = useRef(new Set<string>())
   const privateCueLedgerRef = useRef<Record<string, ParticipantCue>>({})
   const roleClaimNotification = useRef<RoleClaimNotification | null>(null)
@@ -189,10 +197,12 @@ function MimosaApp() {
   const [seedTransfer, setSeedTransfer] = useState<SeedTransfer | null>(null)
   const [studyEvents, setStudyEvents] = useState<StudyEvent[]>(() =>
     readStudyEvents(localStorage, studyIdentity.sessionId))
+  const studyEventsRef = useRef(studyEvents)
   const [deferredDrafts, setDeferredDrafts] = useState<Record<string, string>>({})
   const [pendingDeferredRemovalId, setPendingDeferredRemovalId] = useState<string | null>(null)
   const [silenceDetectionEnabled] = useState(true)
   const [sensorStatus, setSensorStatus] = useState<SpeechSensorStatus>('idle')
+  const sensorStatusRef = useRef<SpeechSensorStatus>('idle')
   const [, setSensorMessage] = useState('')
   const [localSpeechState, setLocalSpeechState] = useState<'waiting' | 'speaking' | 'quiet'>('waiting')
   const [localAudioMuted, setLocalAudioMuted] = useState(true)
@@ -202,8 +212,11 @@ function MimosaApp() {
   const [candidateNotice, setCandidateNotice] = useState('')
   const [candidateExiting, setCandidateExiting] = useState(false)
   const [deferredStorageReady, setDeferredStorageReady] = useState(false)
+  const connectionRef = useRef(connection)
 
   useEffect(() => { stateRef.current = state }, [state])
+  useEffect(() => { connectionRef.current = connection }, [connection])
+  useEffect(() => { sensorStatusRef.current = sensorStatus }, [sensorStatus])
   useEffect(() => () => roleClaimNotification.current?.dispose(), [])
   useEffect(() => {
     localeRef.current = locale
@@ -354,20 +367,96 @@ function MimosaApp() {
   }
 
   function recordEvent(type: string, momentId?: string, details?: Record<string, unknown>) {
-    setStudyEvents((events) => [
-      ...events,
-      {
+    setStudyEvents((events) => {
+      const nextEvents = [
+        ...events,
+        {
         sequence: events.length + 1,
         at: new Date().toISOString(),
         type,
         momentId,
         details: {
           ...details,
+          condition: 'mimosa',
           participantCount: participantsRef.current.length,
           localRole: stateRef.current.localRole,
         },
+        },
+      ]
+      studyEventsRef.current = nextEvents
+      return nextEvents
+    })
+  }
+
+  function promptKey(momentId: string, stage: PromptStage) {
+    return `${momentId}:${stage}`
+  }
+
+  function recordPromptShown(
+    momentId: string,
+    stage: PromptStage,
+    details?: Record<string, unknown>,
+  ) {
+    const key = promptKey(momentId, stage)
+    if (shownPromptKeys.current.has(key)) return
+    shownPromptKeys.current.add(key)
+    recordEvent('prompt_shown', momentId, { stage, ...details })
+  }
+
+  function recordPromptSelection(
+    momentId: string,
+    stage: PromptStage,
+    option: string,
+  ) {
+    selectedPromptKeys.current.add(promptKey(momentId, stage))
+    recordEvent('prompt_option_selected', momentId, { stage, option })
+  }
+
+  function recordPromptIgnored(momentId: string, stage: PromptStage, reason: string) {
+    const key = promptKey(momentId, stage)
+    if (
+      !shownPromptKeys.current.has(key) ||
+      selectedPromptKeys.current.has(key) ||
+      ignoredPromptKeys.current.has(key)
+    ) return
+    ignoredPromptKeys.current.add(key)
+    recordEvent('prompt_ignored', momentId, { stage, reason })
+  }
+
+  function recordOutstandingPromptIgnores(momentId: string, reason: string) {
+    recordPromptIgnored(momentId, 'role_followup', reason)
+    recordPromptIgnored(momentId, 'participant_cue', reason)
+  }
+
+  function createCurrentStudyLogBundle() {
+    const current = stateRef.current
+    return createStudyLogBundle(
+      studyIdentity,
+      {
+        schemaVersion: STUDY_LOG_SCHEMA_VERSION,
+        condition: 'mimosa',
+        roomName,
+        protocolVersion: MIMOSA_PROTOCOL_VERSION,
+        settings: {
+          roomSilenceThresholdMs: ROOM_SILENCE_THRESHOLD_MS,
+          roleConfirmationWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
+          plantCloseStartMs: PLANT_CLOSE_START_DELAY_MS,
+          responseCountMode: RESPONSE_COUNT_MODE,
+          sensingMode: silenceDetectionEnabled ? 'local-vad' : 'manual-fallback',
+        },
       },
-    ])
+      {
+        activeMomentId: current.activeMoment?.id,
+        activeMomentPhase: current.activeMoment?.phase,
+        localRole: current.localRole,
+        deferredMomentIds: current.deferredMoments.map((moment) => moment.id),
+        deferredQuestionCount: current.deferredMoments.length,
+        participantCount: participantsRef.current.length,
+        sensorStatus: sensorStatusRef.current,
+        connection: connectionRef.current,
+      },
+      studyEventsRef.current,
+    )
   }
 
   function buildEnvelope<T extends MimosaEnvelope>(message: Omit<T, 'app' | 'version' | 'messageId' | 'sentAt'>) {
@@ -500,7 +589,7 @@ function MimosaApp() {
 
   function respondToLogRequest(requestId: string, requesterId: string) {
     if (isObserver || !transportRef.current) return
-    const chunks = createLogTransferChunks(requestId, studyIdentity, studyEvents)
+    const chunks = createLogTransferChunks(requestId, createCurrentStudyLogBundle())
     for (const chunk of chunks) {
       sendReliably(requesterId, buildEnvelope({
         ...baseFields(stateRef.current.activeMoment?.id ?? ''),
@@ -528,11 +617,19 @@ function MimosaApp() {
 
   function downloadAggregatedLogs() {
     if (!isObserver || Object.keys(observerLogs).length === 0) return
+    const receivedParticipants = Object.keys(observerLogs).length
     const payload = {
       exportedAt: new Date().toISOString(),
+      schemaVersion: STUDY_LOG_SCHEMA_VERSION,
       roomId: `${appId}/${roomName}`,
+      condition: 'mimosa',
+      protocolVersion: MIMOSA_PROTOCOL_VERSION,
       requestId: observerLogRequestId,
-      participantCount: studyParticipants.length,
+      collection: {
+        expectedParticipants: studyParticipants.length,
+        receivedParticipants,
+        complete: receivedParticipants === studyParticipants.length,
+      },
       logs: Object.values(observerLogs),
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -544,7 +641,7 @@ function MimosaApp() {
     URL.revokeObjectURL(url)
     recordEvent('researcher_downloaded_aggregated_logs', stateRef.current.activeMoment?.id, {
       requestId: observerLogRequestId,
-      receivedParticipants: Object.keys(observerLogs).length,
+      receivedParticipants,
     })
   }
 
@@ -767,6 +864,7 @@ function MimosaApp() {
     broadcastReliably(confirmation)
     scheduleProgressiveClosure(momentId)
     recordEvent('waiting_role_announced', momentId, { claimId })
+    recordPromptShown(momentId, 'care_action')
   }
 
   function notifyOtherMemberOfWaitingClaim(momentId: string, waitingMemberId: string) {
@@ -775,6 +873,17 @@ function MimosaApp() {
     notifiedWaitingMoments.current.add(momentId)
     const played = roleClaimNotification.current?.play() ?? false
     recordEvent('waiting_role_notification_cued', momentId, {
+      channel: 'audio-and-visual',
+      audioPlayed: played,
+    })
+  }
+
+  function notifyRoleConfirmationPrompt(momentId: string) {
+    if (isObserver || notifiedCandidateMoments.current.has(momentId)) return
+    notifiedCandidateMoments.current.add(momentId)
+    const played = roleClaimNotification.current?.play() ?? false
+    recordEvent('mimosa_prompt_notification_cued', momentId, {
+      stage: 'role_confirmation',
       channel: 'audio-and-visual',
       audioPlayed: played,
     })
@@ -895,10 +1004,21 @@ function MimosaApp() {
             detectedAt: message.payload.detectedAt,
             expiresAt: message.payload.expiresAt,
           })
+          if (!isObserver) {
+            recordPromptShown(message.silentMomentId, 'role_confirmation', {
+              trigger: 'room-message',
+            })
+            notifyRoleConfirmationPrompt(message.silentMomentId)
+          }
         }
         break
       case 'SILENCE_CANDIDATE_CANCELLED':
         if (current.activeMoment?.id === message.silentMomentId && current.activeMoment.phase === 'ROLE_CONFIRMATION') {
+          recordPromptIgnored(
+            message.silentMomentId,
+            'role_confirmation',
+            message.payload.reason,
+          )
           clearCandidateTimer()
           pendingWaitingClaimId.current = null
           if (message.payload.reason === 'unclaimed') {
@@ -946,6 +1066,11 @@ function MimosaApp() {
             resumedFrom: message.payload.resumedFrom,
           })
           recordEvent('silent_moment_received', message.silentMomentId, { resumed: Boolean(message.payload.resumedFrom) })
+          if (!isObserver) {
+            recordPromptShown(message.silentMomentId, 'participant_cue', {
+              trigger: 'manual-open-question',
+            })
+          }
           notifyOtherMemberOfWaitingClaim(message.silentMomentId, senderId)
         }
         break
@@ -994,6 +1119,11 @@ function MimosaApp() {
           claimId: message.payload.claimId,
           waitingEndpointBoundFrom: 'sender',
         })
+        if (!isObserver && current.localRole === 'unassigned') {
+          recordPromptShown(message.silentMomentId, 'role_followup')
+        } else if (!isObserver && current.localRole === 'responding') {
+          recordPromptShown(message.silentMomentId, 'participant_cue')
+        }
         notifyOtherMemberOfWaitingClaim(message.silentMomentId, senderId)
         break
       }
@@ -1050,6 +1180,7 @@ function MimosaApp() {
       case 'MOMENT_ENDED':
         closedMomentIdsRef.current.add(message.silentMomentId)
         if (current.activeMoment?.id !== message.silentMomentId) break
+        recordOutstandingPromptIgnores(message.silentMomentId, 'moment-ended')
         clearRecoveryTimer()
         setRecoverySuggested(false)
         showRoundNotice(message.payload.outcome, message.payload.question)
@@ -1088,6 +1219,12 @@ function MimosaApp() {
           }
           recordEvent('public_snapshot_restored', message.silentMomentId)
           if (snapshot.phase === 'ROLE_CONFIRMATION' && snapshot.candidateExpiresAt) {
+            if (!isObserver) {
+              recordPromptShown(snapshot.id, 'role_confirmation', {
+                trigger: 'late-join-snapshot',
+              })
+              notifyRoleConfirmationPrompt(snapshot.id)
+            }
             const localId = transport?.getLocalParticipantId()
             const coordinatorPresent = participantsRef.current.some(
               (participant) => participant.id === snapshot.coordinatorId,
@@ -1112,6 +1249,10 @@ function MimosaApp() {
               }))
               scheduleCandidateExpiry(snapshot.id, snapshot.candidateExpiresAt)
             }
+          } else if (!isObserver) {
+            recordPromptShown(snapshot.id, 'participant_cue', {
+              trigger: 'late-join-snapshot',
+            })
           }
         }
         break
@@ -1230,9 +1371,12 @@ function MimosaApp() {
     })
     knownParticipantIds.current.clear()
     transport.onParticipantsChanged((nextParticipants) => {
-      const added = nextParticipants.filter((participant) => !knownParticipantIds.current.has(participant.id))
-      knownParticipantIds.current = new Set(nextParticipants.map((participant) => participant.id))
-      const presentIds = new Set(nextParticipants.map((participant) => participant.id))
+      const previousIds = knownParticipantIds.current
+      const added = nextParticipants.filter((participant) => !previousIds.has(participant.id))
+      const nextIds = new Set(nextParticipants.map((participant) => participant.id))
+      const removedCount = [...previousIds].filter((participantId) => !nextIds.has(participantId)).length
+      knownParticipantIds.current = nextIds
+      const presentIds = nextIds
       observerIdsRef.current = new Set(
         [...observerIdsRef.current].filter((participantId) => presentIds.has(participantId)),
       )
@@ -1247,6 +1391,13 @@ function MimosaApp() {
       participantClientKeys.current = new Map(
         [...participantClientKeys.current].filter(([endpointId]) => presentIds.has(endpointId)),
       )
+      if (added.length > 0 || removedCount > 0) {
+        recordEvent('participant_roster_changed', stateRef.current.activeMoment?.id, {
+          joinedCount: added.length,
+          leftCount: removedCount,
+          studyParticipantCount: nextStudyParticipants.length,
+        })
+      }
 
       const localId = transport.getLocalParticipantId()
       if (isObserver) {
@@ -1414,6 +1565,9 @@ function MimosaApp() {
     const localId = transport?.getLocalParticipantId()
     const resolvedQuestion = (questionOverride ?? question).trim()
     if (!transport || !localId || !resolvedQuestion) return
+    const deferredSource = resumedFrom
+      ? stateRef.current.deferredMoments.find((moment) => moment.id === resumedFrom)
+      : undefined
     setRoundNotice(null)
     setNoticeDismissing(false)
     setSeedTransfer(null)
@@ -1455,7 +1609,13 @@ function MimosaApp() {
       },
     }))
     scheduleProgressiveClosure(id)
-    recordEvent(resumedFrom ? 'deferred_question_resumed' : 'silent_moment_created', id, { resumedFrom })
+    recordEvent(resumedFrom ? 'deferred_question_resumed' : 'silent_moment_created', id, {
+      resumedFrom,
+      edited: Boolean(deferredSource && deferredSource.question.trim() !== resolvedQuestion),
+    })
+    recordPromptShown(id, 'care_action', {
+      trigger: resumedFrom ? 'deferred-question-resumed' : 'manual-open-question',
+    })
   }
 
   function createSilenceCandidate(source: 'automatic' | 'manual' = 'manual') {
@@ -1493,6 +1653,8 @@ function MimosaApp() {
       thresholdMs: source === 'automatic' ? ROOM_SILENCE_THRESHOLD_MS : undefined,
       roleWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
     })
+    recordPromptShown(id, 'role_confirmation', { trigger: source })
+    notifyRoleConfirmationPrompt(id)
   }
 
   function cancelSilenceCandidate(
@@ -1523,6 +1685,7 @@ function MimosaApp() {
       setSilenceSecondsLeft(null)
       setLocalSpeechState('waiting')
     }
+    recordPromptIgnored(moment.id, 'role_confirmation', reason)
     transitionCandidateOut(
       moment.id,
       reason === 'speech-resumed'
@@ -1541,6 +1704,7 @@ function MimosaApp() {
     const localId = transport?.getLocalParticipantId()
     const moment = stateRef.current.activeMoment
     if (!transport || !localId || !moment || moment.phase !== 'ROLE_CONFIRMATION') return
+    recordPromptSelection(moment.id, 'role_confirmation', role)
 
     if (role === 'waiting') {
       const claimId = crypto.randomUUID()
@@ -1569,8 +1733,24 @@ function MimosaApp() {
     recordEvent('local_moment_role_selected', moment.id, { role })
   }
 
+  function chooseFollowupRole(role: 'responding' | 'dismissed') {
+    if (isObserver) return
+    const moment = stateRef.current.activeMoment
+    if (!moment || moment.phase === 'ROLE_CONFIRMATION') return
+    recordPromptSelection(moment.id, 'role_followup', role)
+    dispatch({ type: 'LOCAL_MOMENT_ROLE_CHANGED', role })
+    recordEvent('local_moment_role_selected', moment.id, {
+      role,
+      stage: 'role_followup',
+    })
+    if (role === 'responding') recordPromptShown(moment.id, 'participant_cue')
+  }
+
   function chooseCue(cue: ParticipantCue) {
     if (isObserver) return
+    const moment = stateRef.current.activeMoment
+    if (!moment || stateRef.current.localRole !== 'responding') return
+    recordPromptSelection(moment.id, 'participant_cue', cue)
     if (cue === 'SOCIAL_PRESSURE') {
       sendCue(cue, 'cloudy')
       return
@@ -1629,6 +1809,7 @@ function MimosaApp() {
     const current = stateRef.current
     const moment = current.activeMoment
     if (!transport || !moment || current.localRole !== 'waiting') return
+    recordPromptSelection(moment.id, 'care_action', action)
     clearNoResponseTimer()
     const effect = getCareEffect(action)
     setLastCareAction(action)
@@ -1651,6 +1832,7 @@ function MimosaApp() {
     const transport = transportRef.current
     const moment = stateRef.current.activeMoment
     if (!transport || !moment || !moment.waitingMemberId) return
+    recordOutstandingPromptIgnores(moment.id, 'moment-ended')
     clearNoResponseTimer()
     clearRecoveryTimer()
     setRecoverySuggested(false)
@@ -1701,22 +1883,7 @@ function MimosaApp() {
   }
 
   function downloadStudyLog() {
-    const payload = JSON.stringify({
-      exportedAt: new Date().toISOString(),
-      study: {
-        ...studyIdentity,
-        roomName,
-        protocolVersion: 14,
-        settings: {
-          roomSilenceThresholdMs: ROOM_SILENCE_THRESHOLD_MS,
-          roleConfirmationWindowMs: ROLE_CONFIRMATION_WINDOW_MS,
-          plantCloseStartMs: PLANT_CLOSE_START_DELAY_MS,
-          responseCountMode: RESPONSE_COUNT_MODE,
-          sensingMode: silenceDetectionEnabled ? 'local-vad' : 'manual-fallback',
-        },
-      },
-      events: studyEvents,
-    }, null, 2)
+    const payload = JSON.stringify(createCurrentStudyLogBundle(), null, 2)
     const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
@@ -1727,6 +1894,7 @@ function MimosaApp() {
 
   function clearStudyLog() {
     clearStudyEvents(localStorage, studyIdentity.sessionId)
+    studyEventsRef.current = []
     setStudyEvents([])
   }
 
@@ -1946,8 +2114,8 @@ function MimosaApp() {
               <span className="eyebrow">{t('问题已经被认领')}</span>
               <h2>{t('你可能会回应这次问题吗？')}</h2>
               <div className="role-followup-actions">
-                <button type="button" onClick={() => dispatch({ type: 'LOCAL_MOMENT_ROLE_CHANGED', role: 'responding' })}>{t('我可能会回应')}</button>
-                <button type="button" onClick={() => dispatch({ type: 'LOCAL_MOMENT_ROLE_CHANGED', role: 'dismissed' })}>{t('暂时不需要')}</button>
+                <button type="button" onClick={() => chooseFollowupRole('responding')}>{t('我可能会回应')}</button>
+                <button type="button" onClick={() => chooseFollowupRole('dismissed')}>{t('暂时不需要')}</button>
               </div>
             </section>
           )}
@@ -1956,7 +2124,7 @@ function MimosaApp() {
             <section className="action-panel dismissed-panel">
               <span className="eyebrow">{t('本轮已安静收起')}</span>
               <p>{t('你仍然可以正常听和发言；如果改变主意，也可以重新加入轻量回应。')}</p>
-              <button className="secondary-action" type="button" onClick={() => dispatch({ type: 'LOCAL_MOMENT_ROLE_CHANGED', role: 'responding' })}>{t('我想回应了')}</button>
+              <button className="secondary-action" type="button" onClick={() => chooseFollowupRole('responding')}>{t('我想回应了')}</button>
             </section>
           )}
 
